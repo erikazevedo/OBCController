@@ -18,22 +18,23 @@ All application code lives under `main/`. The structure is intentionally flat so
 
 ```
 OBCController/
-├── main/
-│   ├── CMakeLists.txt
-│   ├── main.c                  # App entry point: hardware init sequence, task creation
-│   ├── gpio_config.h           # REQUIRED: single authoritative GPIO pin assignment header
-│   ├── twai_handler.c          # TWAI0 + TWAI1 driver init, filters, ISR callbacks, TX helpers
-│   ├── twai_handler.h
-│   ├── mcpwm_capture.c         # MCPWM capture timer + channel init, on_cap ISR, watchdog
-│   ├── mcpwm_capture.h
-│   ├── adc_reader.c            # ADC continuous DMA init, on_conv_done ISR, calibration handle
-│   ├── adc_reader.h
-│   ├── state_machine.c         # Application state machine task body
-│   ├── state_machine.h
-│   ├── rx_dispatcher.c         # RX queue consumer task and per-ID callback dispatch
-│   └── rx_dispatcher.h
-├── CMakeLists.txt
-└── sdkconfig.defaults          # Kconfig overrides — IRAM flags, log level, tick rate
+└── firmware/
+    ├── main/
+    │   ├── CMakeLists.txt
+    │   ├── main.c                  # App entry point: hardware init sequence, task creation
+    │   ├── gpio_config.h           # REQUIRED: single authoritative GPIO pin assignment header
+    │   ├── twai_handler.c          # TWAI0 + TWAI1 driver init, filters, ISR callbacks, TX helpers
+    │   ├── twai_handler.h
+    │   ├── mcpwm_capture.c         # MCPWM capture timer + channel init, on_cap ISR, watchdog
+    │   ├── mcpwm_capture.h
+    │   ├── adc_reader.c            # ADC continuous DMA init, on_conv_done ISR, calibration handle
+    │   ├── adc_reader.h
+    │   ├── state_machine.c         # Application state machine task body
+    │   ├── state_machine.h
+    │   ├── rx_dispatcher.c         # RX queue consumer task and per-ID callback dispatch
+    │   └── rx_dispatcher.h
+    ├── CMakeLists.txt
+    └── sdkconfig.defaults          # Kconfig overrides — IRAM flags, log level, tick rate
 ```
 
 ## REQUIRED: `gpio_config.h`

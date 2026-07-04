@@ -1,0 +1,16 @@
+# TWAI driver — IRAM and cache-safe ISR placement
+CONFIG_TWAI_ISR_IN_IRAM=y
+CONFIG_TWAI_IO_FUNC_IN_IRAM=y
+CONFIG_TWAI_ISR_CACHE_SAFE=y
+
+# MCPWM driver — cache-safe ISR placement
+CONFIG_MCPWM_ISR_CACHE_SAFE=y
+
+# ADC continuous driver — IRAM-safe ISR
+CONFIG_ADC_CONTINUOUS_ISR_IRAM_SAFE=y
+
+# Logging — warn level only in production
+CONFIG_LOG_DEFAULT_LEVEL=2
+
+# FreeRTOS tick rate
+CONFIG_FREERTOS_HZ=1000
