@@ -136,7 +136,7 @@ The counter is initialised to 0. The first value transmitted on the bus is there
 | 0x28 | IDLE | Vehicle ON, no active charge session |
 | 0x30 | TIMER_WAIT | Cable plugged; waiting for timer expiry or pilot authorisation |
 | 0x38 | ASLEEP | Vehicle off; OBC goes silent |
-| 0x40 | FINISHED | Charge session complete |
+| 0x40 | CHARGE_INIT | First step of charge ramp-up; follows VCM CHARGING_SLOW authorisation. Previously named FINISHED — that name is incorrect based on AC-charge captures |
 | 0x60 | CHARGING | L2 AC charging active |
 | 0x70 | CHARGE_START | Transitional — charge starting |
 | 0xB0 | QUICK_CHARGING | CHAdeMO DC fast charge active |

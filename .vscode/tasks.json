@@ -1,0 +1,21 @@
+
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Firmware: Build (Docker ESP-IDF)",
+            "type": "shell",
+            "command": "docker run --rm -v \"${workspaceFolder}/firmware:/project\" -w /project espressif/idf idf.py build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}
