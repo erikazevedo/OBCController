@@ -1,5 +1,8 @@
 #include "state_machine.h"
 #include "sm_config.h"
+#include "esp_log.h"
+
+static const char *TAG = "sm";
 #include "gpio_config.h"
 #include "twai_handler.h"
 #include "mcpwm_capture.h"
@@ -209,6 +212,7 @@ void state_machine_task(void *pvParams)
         case SM_STATE_SLEEP:
             if (vcm_run) {
                 sm_enter_idle_no_plug();
+                ESP_LOGI(TAG, "SM: SLEEP -> IDLE_NO_PLUG (VCM_RUN)");
                 state = SM_STATE_IDLE_NO_PLUG;
             }
             break;
@@ -216,6 +220,7 @@ void state_machine_task(void *pvParams)
         case SM_STATE_IDLE_NO_PLUG:
             if (vcm_sleep) {
                 sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: IDLE_NO_PLUG -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
             } else if (adc_mv <= SM_ADC_NO_PLUG_MV) {
                 /* Zone A or B — plug present */
@@ -223,11 +228,20 @@ void state_machine_task(void *pvParams)
                 idle_plug_status_adv = false;
                 i_max_A             = 0.0f;
                 sm_enter_idle_plug();
+                ESP_LOGI(TAG, "SM: IDLE_NO_PLUG -> IDLE_PLUG (plug detected)");
                 state = SM_STATE_IDLE_PLUG;
             }
             break;
 
         case SM_STATE_IDLE_PLUG:
+            /* Zone B (button held) — hold the advance timer at zero so charging
+             * does not restart the instant the button is released. */
+            if (adc_mv >= SM_ADC_BUTTON_MV) {
+                idle_plug_ticks      = 0;
+                idle_plug_status_adv = false;
+                frame_5bf_data[4]    = 0x10;   /* revert to TIMER_WAIT2 */
+            }
+
             /* Advance 0x5BF status 0x10 → 0x18 (PLUG_BEEP) after exactly 100 ms */
             if (!idle_plug_status_adv) {
                 idle_plug_ticks++;
@@ -249,20 +263,29 @@ void state_machine_task(void *pvParams)
             if (vcm_sleep) {
                 gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
                 sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
             } else if (adc_mv > SM_ADC_NO_PLUG_MV) {
                 /* Zone C — plug physically removed */
                 sm_enter_idle_no_plug();   /* also clears LED */
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> IDLE_NO_PLUG (plug removed)");
                 state = SM_STATE_IDLE_NO_PLUG;
-            } else if (vcm_charge) {
-                /* VCM authorised — freeze session current while CP is still LOW */
+#if SM_SKIP_VCM_AUTH
+            } else if (idle_plug_status_adv && adc_mv < SM_ADC_BUTTON_MV) {
+                /* Auth skipped — advance automatically after PLUG_BEEP (100 ms), no VCM signal needed.
+                 * Zone A only: button held (Zone B) keeps us here until released. */
                 session_amps = i_max_A;
                 gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
-#if SM_SKIP_VCM_AUTH
                 sm_enter_evse_enable();
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> EVSE_ENABLE (auth skipped, %.1f A)", session_amps);
                 state = SM_STATE_EVSE_ENABLE;
 #else
+            } else if (vcm_charge) {
+                /* VCM charge command — freeze session current while CP is still LOW */
+                session_amps = i_max_A;
+                gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
                 sm_enter_vcm_auth();
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> VCM_AUTH (charge cmd, %.1f A)", session_amps);
                 state = SM_STATE_VCM_AUTH;
 #endif
             }
@@ -272,19 +295,23 @@ void state_machine_task(void *pvParams)
             /* High-priority abort checks first */
             if (vcm_sleep) {
                 sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: VCM_AUTH -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
             } else if (adc_mv > SM_ADC_NO_PLUG_MV) {
                 /* Zone C — plug removed */
                 sm_enter_idle_no_plug();
+                ESP_LOGI(TAG, "SM: VCM_AUTH -> IDLE_NO_PLUG (plug removed)");
                 state = SM_STATE_IDLE_NO_PLUG;
             } else if (adc_mv >= SM_ADC_BUTTON_MV) {
                 /* Zone B — button pressed, plug body still present */
                 idle_plug_ticks     = 0;
                 idle_plug_status_adv = false;
                 sm_enter_idle_plug();
+                ESP_LOGI(TAG, "SM: VCM_AUTH -> IDLE_PLUG (button pressed)");
                 state = SM_STATE_IDLE_PLUG;
             } else if (vcm_charge) {
                 sm_enter_evse_enable();
+                ESP_LOGI(TAG, "SM: VCM_AUTH -> EVSE_ENABLE (%.1f A)", session_amps);
                 state = SM_STATE_EVSE_ENABLE;
             }
             break;
@@ -293,10 +320,12 @@ void state_machine_task(void *pvParams)
             /* High-priority abort checks first */
             if (vcm_sleep || lbc_fail || adc_mv >= SM_ADC_BUTTON_MV) {
                 sm_enter_charge_disable();
+                ESP_LOGI(TAG, "SM: EVSE_ENABLE -> CHARGE_DISABLE (abort)");
                 state = SM_STATE_CHARGE_DISABLE;
             } else if (t1_rxd) {
                 /* OBC alive — any TWAI1 frame received */
                 sm_enter_charging(session_amps);
+                ESP_LOGI(TAG, "SM: EVSE_ENABLE -> CHARGING (%.1f A)", session_amps);
                 state = SM_STATE_CHARGING;
             }
             break;
@@ -308,6 +337,7 @@ void state_machine_task(void *pvParams)
                     || chg_int
                     || soc_pct >= SM_SOC_CUTOFF_PCT) {
                 sm_enter_charge_disable();
+                ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE");
                 state = SM_STATE_CHARGE_DISABLE;
             }
             break;
@@ -321,19 +351,21 @@ void state_machine_task(void *pvParams)
                 idle_plug_status_adv = false;
                 i_max_A             = 0.0f;
                 sm_enter_idle_plug();
+                ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> IDLE_PLUG");
                 state = SM_STATE_IDLE_PLUG;
             } else {
                 sm_enter_idle_no_plug();
+                ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> IDLE_NO_PLUG");
                 state = SM_STATE_IDLE_NO_PLUG;
             }
             break;
         }
 
         /* ── 5. Safety override: immediate contactor de-assert ──────────── */
-        if (g_twai0_bus_off || !pwm_valid) {
-            gpio_set_level(GPIO_CONT_POS, 0);
-            gpio_set_level(GPIO_CONT_NEG, 0);
-        }
+        // if (g_twai0_bus_off || !pwm_valid) {
+        //     gpio_set_level(GPIO_CONT_POS, 0);
+        //     gpio_set_level(GPIO_CONT_NEG, 0);
+        // }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10));
     }

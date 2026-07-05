@@ -61,7 +61,7 @@ void adc_reader_init(void)
         .atten     = ADC_ATTEN_DB_12,
         .channel   = channel,
         .unit      = unit,
-        .bit_width = ADC_BITWIDTH_DEFAULT,
+        .bit_width = ADC_BITWIDTH_12,
     };
     adc_continuous_config_t cont_cfg = {
         .pattern_num    = 1,
@@ -77,7 +77,7 @@ void adc_reader_init(void)
         .unit_id  = unit,
         .chan     = channel,
         .atten    = ADC_ATTEN_DB_12,
-        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .bitwidth = ADC_BITWIDTH_12,
     };
     esp_err_t cali_err = adc_cali_create_scheme_curve_fitting(&cali_cfg, &adc_cali_hdl);
     if (cali_err == ESP_ERR_NOT_SUPPORTED) {

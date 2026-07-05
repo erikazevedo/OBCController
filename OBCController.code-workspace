@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "firmware"
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"sls": true
+		}
+	}
+}

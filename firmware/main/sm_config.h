@@ -21,7 +21,7 @@
 #define SM_ADC_NO_PLUG_MV          2300
 
 /** ADC voltage at or above which button/unlock press is signalled (mV). */
-#define SM_ADC_BUTTON_MV           900
+#define SM_ADC_BUTTON_MV           700
 
 /** Lear OBC DC target voltage setpoint (V). */
 #define SM_LEAR_TARGET_VOLTAGE_V   392
