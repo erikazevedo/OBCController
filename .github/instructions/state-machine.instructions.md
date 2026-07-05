@@ -40,6 +40,20 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
 
 ---
 
+## State Machine Context Variables
+
+These variables are file-scope statics internal to the state machine task. They carry context across state transitions to enable path-dependent behaviour.
+
+| Variable | Type | Initial value | Purpose |
+|---|---|---|---|
+| `g_arrived_from_sleep` | `bool` | `false` | Set `true` when IDLE_PLUG is entered via WAKE (from SLEEP). Cleared to `false` when IDLE_PLUG is entered from IDLE_NO_PLUG or CHARGE_DISABLE. Controls IDLE_PLUG routing (VCM_AUTH vs EVSE_ENABLE) and plug-removal destination (SLEEP vs IDLE_NO_PLUG). |
+| `eva_req_ticks` | `int` | `0` | EVA_REQ 1 s pulse countdown. Set to 100 on WAKE entry (100 × 10 ms SM cycles = 1 s). Decremented each 10 ms cycle while in IDLE_PLUG; when it reaches 0, `GPIO_EVA_REQ` is driven LOW (one-shot). Value is 0 on the awake path — no-op. |
+| `idle_plug_ticks` | `int` | `0` | Counts 10 ms cycles from IDLE_PLUG entry to advance `0x5BF` status `0x10 → 0x18` (PLUG_BEEP) after 100 ms. Reset on every IDLE_PLUG entry. |
+| `idle_plug_status_adv` | `bool` | `false` | Set `true` once PLUG_BEEP has been broadcast. Gate for awake-path auto-advance to EVSE_ENABLE. Cleared on every IDLE_PLUG entry. |
+| `session_amps` | `float` | `0.0f` | J1772 current (A) frozen at the IDLE_PLUG exit transition. Written once per session; read by `sm_enter_charging()` for 0x050 and 0x5BF encoding. |
+
+---
+
 ## States
 
 ### SLEEP
@@ -57,8 +71,28 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
 - **TWAI0 RX triggers**:
   - `0x50B d[3][7:6] == 0b11` (RUN) → IDLE_NO_PLUG
     *(Note: the existing 5-second `esp_timer` delay before `g_twai0_tx_enabled` is set true is part of the TWAI0 TX gate architecture, not a state machine delay. The state machine transitions to IDLE_NO_PLUG immediately; TWAI0 TX simply remains gated until the timer fires.)*
+- **ADC trigger**:
+  - `adc_mv <= SM_ADC_NO_PLUG_MV` AND `g_pwm_signal_valid == true` (plug inserted, CP valid) → WAKE *(autonomous wake — VCM is still asleep; `g_twai0_tx_enabled` set directly by SM without the 5 s gate delay)*
 - **TWAI1 actions**: None.
 - **Timeout**: None.
+
+---
+
+### WAKE
+
+- **Description**: Autonomous wake triggered from SLEEP when plug is inserted with a valid CP pilot signal. Pass-through state: WAKE-specific entry actions fire (EVA_REQ pulse, context flags, TWAI0 TX enable), then the state machine calls `sm_enter_idle_plug()` and advances to IDLE_PLUG in the same evaluation cycle. The 1 s `GPIO_EVA_REQ` pulse runs concurrently, managed by `eva_req_ticks` inside IDLE_PLUG.
+- **Entry actions** (executed before advancing to IDLE_PLUG):
+  - `g_twai0_tx_enabled = true` — enable TWAI0 TX immediately (no 5 s delay; VCM is asleep and must see 0x380/0x5BF as it wakes up from the EVA_REQ pulse)
+  - `GPIO_EVA_REQ = HIGH` — begin 1 s EVA_REQ pulse
+  - `eva_req_ticks = 100` — arm countdown; de-assertion handled each 10 ms cycle in IDLE_PLUG
+  - `g_arrived_from_sleep = true` — tag IDLE_PLUG for sleep-path routing
+  - `idle_plug_ticks = 0`, `idle_plug_status_adv = false`, `i_max_A = 0.0f`
+  - Call `sm_enter_idle_plug()` and set `state = SM_STATE_IDLE_PLUG` (same cycle — zero dwell in WAKE)
+- **Exit actions**: None (pass-through; IDLE_PLUG entry actions run as part of the immediate transition).
+- **TWAI0 TX obligations**: None of its own — IDLE_PLUG's 100 ms TX obligations (0x380, 0x5BF) apply from the moment `g_twai0_tx_enabled` is set.
+- **TWAI0 RX triggers**: None — exits immediately via entry action.
+- **TWAI1 actions**: None.
+- **Timeout**: None (zero-dwell state).
 
 ---
 
@@ -98,6 +132,7 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - If `g_pwm_signal_valid == true`: compute J1772 current from `g_pwm_duty_us`/`g_pwm_period_us` using the derivation formula below; store locally as `i_max_A`.
   - If `g_pwm_signal_valid == false`: hold `i_max_A = 0.0f`.
   - Write `frame_5bf.d[2] = (uint8_t)(i_max_A * 5.0f)` — broadcasts J1772 available current to VCM via `0x5BF d[2]` (`amps × 5` encoding, per frame spec).
+  - **EVA_REQ countdown** (sleep path only — no-op when `eva_req_ticks == 0`): if `eva_req_ticks > 0`, decrement. When `eva_req_ticks` reaches 0: `GPIO_EVA_REQ = LOW` (one-shot de-assertion at exactly 1 s after WAKE entry).
   > **Hardware constraint:** J1772 PWM MUST be sampled here, before `GPIO_CP_ENABLE` is asserted. After `CP_ENABLE` goes HIGH the CP circuit shifts to a lower signal voltage and MCPWM edge detection becomes unreliable. The value derived here is frozen at transition time and used as the fixed current limit for the entire charging session.
 - **Exit actions**:
   - `GPIO_STATUS_LED = LOW` (restored to LOW before entering downstream states that set it themselves)
@@ -105,17 +140,18 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - `0x380` at 100 ms: AC relay bit = 0.
   - `0x5BF` at 100 ms: status byte sequence `0x10` (1 frame = 100 ms) → `0x18` (PLUG_BEEP, held until state exit).
 - **TWAI0 RX triggers**:
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(plug remains but VCM slept)*
-  - `0x1F2 d[2] == 0x20` (CHARGING_SLOW — VCM charge command) AND `SM_SKIP_VCM_AUTH == 0` → lock `g_session_ac_current_A = i_max_A`, then → VCM_AUTH
-  - `0x1F2 d[2] == 0x20` AND `SM_SKIP_VCM_AUTH != 0` → lock `g_session_ac_current_A = i_max_A`, then → EVSE_ENABLE
+  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(plug remains but VCM slept; force `GPIO_EVA_REQ = LOW`, `eva_req_ticks = 0` if still pulsing)*
+  - `0x1F2 d[2] == 0x20` (CHARGING_SLOW — VCM charge command) AND `g_arrived_from_sleep == true` → lock `g_session_ac_current_A = i_max_A`, then → VCM_AUTH *(sleep path always routes through VCM_AUTH)*
   > **Critical:** `d[2] == 0x60` MUST NOT trigger this transition. ZE0 log analysis confirms `0x60` appears during the ~20 s CP pilot handshake window (before VCM authorization) and again at session end. Only `0x20` reliably means the VCM has issued the charge command.
   > **J1772 current lock:** `g_session_ac_current_A` is frozen here — the last `i_max_A` derived in IDLE_PLUG — while `GPIO_CP_ENABLE` is still LOW and the pilot signal is still valid. This is the **only** point per session where `g_session_ac_current_A` is written.
 - **ADC trigger**:
-  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
+  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) AND `g_arrived_from_sleep == true` → SLEEP *(de-assert EVA_REQ immediately: `GPIO_EVA_REQ = LOW`, `eva_req_ticks = 0`; VCM never woke — return fully quiescent)*
+  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) AND `g_arrived_from_sleep == false` → IDLE_NO_PLUG
+- **Awake-path auto-advance** (`g_arrived_from_sleep == false` only): once `idle_plug_status_adv == true` (PLUG_BEEP elapsed, 100 ms) AND Zone A (`adc_mv < SM_ADC_BUTTON_MV`): lock `g_session_ac_current_A = i_max_A`, then → EVSE_ENABLE. No VCM charge command is required on this path.
 - **TWAI1 actions**: None.
-- **Timeout**: None defined — state holds indefinitely awaiting VCM response.
+- **Timeout**: None defined — sleep path holds indefinitely awaiting VCM charge command; awake path auto-advances after 100 ms.
 
-> **Note on `SM_SKIP_VCM_AUTH`**: When set to `1`, the VCM_AUTH state is bypassed entirely. IDLE_PLUG transitions directly to EVSE_ENABLE on the same VCM response trigger. This flag exists because VCM authorisation proved unreliable in prior bench testing.
+> **Note on `SM_SKIP_VCM_AUTH`**: **DEPRECATED.** VCM_AUTH routing is now path-dependent via `g_arrived_from_sleep`, not a compile-time flag. The sleep path (`g_arrived_from_sleep == true`) always uses VCM_AUTH; the awake path (`g_arrived_from_sleep == false`) always bypasses it. The macro remains in `sm_config.h` but must not be evaluated in new logic.
 
 ---
 
@@ -134,8 +170,8 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - `0x1F2 d[2] == 0x20` (CHARGING_SLOW) → EVSE_ENABLE
   - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(high priority — immediate)*
 - **ADC trigger**:
-  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
-  - `adc_mv >= SM_ADC_BUTTON_MV` AND `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone B — button pressed, plug still present) → IDLE_PLUG
+  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → SLEEP *(VCM_AUTH is only reachable via the sleep path; de-assert EVA_REQ if still pulsing: `GPIO_EVA_REQ = LOW`, `eva_req_ticks = 0`)*
+  - `adc_mv >= SM_ADC_BUTTON_MV` AND `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone B — button pressed, plug still present) → IDLE_PLUG *(re-enter IDLE_PLUG with `g_arrived_from_sleep = true` preserved; `eva_req_ticks` countdown continues)*
 - **TWAI1 actions**: None.
 - **Timeout**: **OPEN** — see Open Questions #4.
 
@@ -224,6 +260,7 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   6. Set `frame_5bf.d[4] = 0x28` (IDLE).
   7. `GPIO_STATUS_LED = LOW`.
 - **Exit transition** (after sequence completes):
+  - Clear `g_arrived_from_sleep = false` before any exit — a completed charge session means VCM is now awake; the next IDLE_PLUG entry uses the awake path.
   - `adc_mv <= SM_ADC_NO_PLUG_MV` → IDLE_PLUG *(plug body still present after charge end)*
   - `adc_mv > SM_ADC_NO_PLUG_MV` → IDLE_NO_PLUG *(plug removed)*
 - **TWAI0 TX obligations**: `0x380` and `0x5BF` continue uninterrupted (gptimer ISR still running). Content is updated in steps 5–6 above.
@@ -245,15 +282,17 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 | From | To | Guard | Trigger | Priority |
 |---|---|---|---|---|
 | SLEEP | IDLE_NO_PLUG | — | `0x50B d[3][7:6] == 0b11` (RUN) | Normal |
+| SLEEP | WAKE | `adc_mv <= SM_ADC_NO_PLUG_MV` AND `g_pwm_signal_valid == true` | ADC + MCPWM | Normal |
+| WAKE | IDLE_PLUG | — | Immediate pass-through (same evaluation cycle) | — |
 | IDLE_NO_PLUG | SLEEP | — | `0x50B d[3][7:6] == 0b00` (SLEEP) | Normal |
 | IDLE_NO_PLUG | IDLE_PLUG | — | `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone A or B — plug present) | Normal |
-| IDLE_PLUG | IDLE_NO_PLUG | — | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) | Normal |
+| IDLE_PLUG | SLEEP | `g_arrived_from_sleep == true` | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) | Normal |
+| IDLE_PLUG | IDLE_NO_PLUG | `g_arrived_from_sleep == false` | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) | Normal |
 | IDLE_PLUG | SLEEP | — | `0x50B d[3][7:6] == 0b00` | Normal |
-| IDLE_PLUG | VCM_AUTH | `SM_SKIP_VCM_AUTH == 0` | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
-| IDLE_PLUG | EVSE_ENABLE | `SM_SKIP_VCM_AUTH != 0` | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
+| IDLE_PLUG | VCM_AUTH | `g_arrived_from_sleep == true` | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
+| IDLE_PLUG | EVSE_ENABLE | `g_arrived_from_sleep == false` AND `idle_plug_status_adv == true` AND Zone A | Auto-advance after PLUG_BEEP (100 ms) | Normal |
 | VCM_AUTH | EVSE_ENABLE | — | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
-| VCM_AUTH | SLEEP | — | `0x50B d[3][7:6] == 0b00` | High |
-| VCM_AUTH | IDLE_NO_PLUG | — | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C) | High |
+| VCM_AUTH | SLEEP | — | `0x50B d[3][7:6] == 0b00` OR `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C) | High |
 | VCM_AUTH | IDLE_PLUG | — | `adc_mv >= SM_ADC_BUTTON_MV` AND Zone B (plug still present) | High |
 | EVSE_ENABLE | CHARGING | — | Any TWAI1 frame received (0x616 / 0x617 / 0x618 / 0x274) | Normal |
 | EVSE_ENABLE | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, `0x50B` SLEEP, or `0x1DB` failsafe | High |
@@ -307,6 +346,7 @@ frame_050.d[6] = raw & 0xFF
 3. **CHARGE_DISABLE step 1** writes `frame_050.d[7] = 0x00` (TWAI1 frame) before suspending the TWAI1 TX task. This is on a separate bus from TWAI0 and does not affect TWAI0 TX latency.
 4. **`vTaskResume(twai1_tx_task_hdl)`** in CHARGING entry re-enables TWAI1 TX from the state machine task (priority 21). Since TWAI1 TX task is priority 22, it will preempt the state machine task immediately on resume. Ensure `frame_050` is fully configured before calling `vTaskResume()`.
 5. **SOC** is decoded from `0x55B` by the RX dispatcher (priority 23) and written to a `DRAM_ATTR volatile float` or fixed-point variable. The state machine task reads it without a mutex; on RISC-V, 32-bit aligned reads are atomic.
+6. **WAKE TWAI0 TX enable**: In WAKE entry, `g_twai0_tx_enabled` is set directly to `true` by the state machine task — no 5 s gate delay. This differs from the VCM RUN path (which uses `twai0_tx_delay_timer`). The delay is intentionally skipped: VCM is asleep and must see 0x380/0x5BF frames as it starts up in response to the EVA_REQ pulse.
 
 ---
 

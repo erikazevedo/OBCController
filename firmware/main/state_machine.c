@@ -177,8 +177,15 @@ void state_machine_task(void *pvParams)
     static sm_state_t state = SM_STATE_SLEEP;
 
     /* IDLE_PLUG 0x10→0x18 timing: advance after 10 SM cycles (100 ms) */
-    static int idle_plug_ticks          = 0;
+    static int  idle_plug_ticks         = 0;
     static bool idle_plug_status_adv    = false;
+
+    /* Sleep-path routing: set true when IDLE_PLUG entered via WAKE (from SLEEP).
+     * Cleared when IDLE_PLUG is entered from IDLE_NO_PLUG or CHARGE_DISABLE. */
+    static bool g_arrived_from_sleep    = false;
+
+    /* EVA_REQ 1 s pulse countdown (100 × 10 ms cycles). Non-zero only on sleep path. */
+    static int  eva_req_ticks           = 0;
 
     /* J1772 current derived in IDLE_PLUG; frozen at VCM charge command */
     float session_amps = 0.0f;
@@ -214,6 +221,20 @@ void state_machine_task(void *pvParams)
                 sm_enter_idle_no_plug();
                 ESP_LOGI(TAG, "SM: SLEEP -> IDLE_NO_PLUG (VCM_RUN)");
                 state = SM_STATE_IDLE_NO_PLUG;
+            } else if (adc_mv <= SM_ADC_NO_PLUG_MV && pwm_valid) {
+                /* Autonomous wake: plug inserted with valid CP while VCM asleep.
+                 * WAKE is zero-dwell — execute entry actions and advance to IDLE_PLUG
+                 * in the same evaluation cycle. */
+                g_twai0_tx_enabled   = true;          /* enable TX immediately; no 5 s gate */
+                gpio_set_level(GPIO_EVA_REQ, 1);      /* begin 1 s EVA_REQ pulse */
+                eva_req_ticks        = 100;            /* arm countdown (100 × 10 ms = 1 s) */
+                g_arrived_from_sleep = true;           /* tag IDLE_PLUG for sleep-path routing */
+                idle_plug_ticks      = 0;
+                idle_plug_status_adv = false;
+                i_max_A              = 0.0f;
+                sm_enter_idle_plug();
+                ESP_LOGI(TAG, "SM: SLEEP -> WAKE -> IDLE_PLUG (plug + CP)");
+                state = SM_STATE_IDLE_PLUG;
             }
             break;
 
@@ -224,9 +245,10 @@ void state_machine_task(void *pvParams)
                 state = SM_STATE_SLEEP;
             } else if (adc_mv <= SM_ADC_NO_PLUG_MV) {
                 /* Zone A or B — plug present */
-                idle_plug_ticks     = 0;
+                g_arrived_from_sleep = false;   /* awake path: clear sleep flag */
+                idle_plug_ticks      = 0;
                 idle_plug_status_adv = false;
-                i_max_A             = 0.0f;
+                i_max_A              = 0.0f;
                 sm_enter_idle_plug();
                 ESP_LOGI(TAG, "SM: IDLE_NO_PLUG -> IDLE_PLUG (plug detected)");
                 state = SM_STATE_IDLE_PLUG;
@@ -259,52 +281,72 @@ void state_machine_task(void *pvParams)
             }
             frame_5bf_data[2] = (uint8_t)(i_max_A * 5.0f);   /* amps × 5 encoding */
 
+            /* EVA_REQ countdown (sleep path only — no-op when eva_req_ticks == 0) */
+            if (eva_req_ticks > 0) {
+                eva_req_ticks--;
+                if (eva_req_ticks == 0) {
+                    gpio_set_level(GPIO_EVA_REQ, 0);   /* de-assert at exactly 1 s after WAKE */
+                }
+            }
+
             /* Evaluate exit conditions */
             if (vcm_sleep) {
+                gpio_set_level(GPIO_EVA_REQ, 0);
+                eva_req_ticks = 0;
                 gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
                 sm_enter_sleep();
                 ESP_LOGI(TAG, "SM: IDLE_PLUG -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
             } else if (adc_mv > SM_ADC_NO_PLUG_MV) {
                 /* Zone C — plug physically removed */
-                sm_enter_idle_no_plug();   /* also clears LED */
-                ESP_LOGI(TAG, "SM: IDLE_PLUG -> IDLE_NO_PLUG (plug removed)");
-                state = SM_STATE_IDLE_NO_PLUG;
-#if SM_SKIP_VCM_AUTH
-            } else if (idle_plug_status_adv && adc_mv < SM_ADC_BUTTON_MV) {
-                /* Auth skipped — advance automatically after PLUG_BEEP (100 ms), no VCM signal needed.
-                 * Zone A only: button held (Zone B) keeps us here until released. */
+                gpio_set_level(GPIO_EVA_REQ, 0);
+                eva_req_ticks = 0;
+                if (g_arrived_from_sleep) {
+                    gpio_set_level(GPIO_STATUS_LED, 0);
+                    sm_enter_sleep();
+                    ESP_LOGI(TAG, "SM: IDLE_PLUG -> SLEEP (plug removed, sleep path)");
+                    state = SM_STATE_SLEEP;
+                } else {
+                    sm_enter_idle_no_plug();   /* also clears LED */
+                    ESP_LOGI(TAG, "SM: IDLE_PLUG -> IDLE_NO_PLUG (plug removed)");
+                    state = SM_STATE_IDLE_NO_PLUG;
+                }
+            } else if (!g_arrived_from_sleep && idle_plug_status_adv && adc_mv < SM_ADC_BUTTON_MV) {
+                /* Awake path: auto-advance after PLUG_BEEP (100 ms), Zone A only */
                 session_amps = i_max_A;
                 gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
                 sm_enter_evse_enable();
-                ESP_LOGI(TAG, "SM: IDLE_PLUG -> EVSE_ENABLE (auth skipped, %.1f A)", session_amps);
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> EVSE_ENABLE (awake path, %.1f A)", session_amps);
                 state = SM_STATE_EVSE_ENABLE;
-#else
-            } else if (vcm_charge) {
-                /* VCM charge command — freeze session current while CP is still LOW */
+            } else if (g_arrived_from_sleep && vcm_charge) {
+                /* Sleep path: VCM charge command — freeze session current, route through VCM_AUTH */
                 session_amps = i_max_A;
                 gpio_set_level(GPIO_STATUS_LED, 0);   /* IDLE_PLUG exit action */
                 sm_enter_vcm_auth();
-                ESP_LOGI(TAG, "SM: IDLE_PLUG -> VCM_AUTH (charge cmd, %.1f A)", session_amps);
+                ESP_LOGI(TAG, "SM: IDLE_PLUG -> VCM_AUTH (sleep path, %.1f A)", session_amps);
                 state = SM_STATE_VCM_AUTH;
-#endif
             }
             break;
 
         case SM_STATE_VCM_AUTH:
             /* High-priority abort checks first */
             if (vcm_sleep) {
+                gpio_set_level(GPIO_EVA_REQ, 0);
+                eva_req_ticks = 0;
                 sm_enter_sleep();
                 ESP_LOGI(TAG, "SM: VCM_AUTH -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
             } else if (adc_mv > SM_ADC_NO_PLUG_MV) {
-                /* Zone C — plug removed */
-                sm_enter_idle_no_plug();
-                ESP_LOGI(TAG, "SM: VCM_AUTH -> IDLE_NO_PLUG (plug removed)");
-                state = SM_STATE_IDLE_NO_PLUG;
+                /* Zone C — plug removed (VCM_AUTH only reachable via sleep path) */
+                gpio_set_level(GPIO_EVA_REQ, 0);
+                eva_req_ticks = 0;
+                sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: VCM_AUTH -> SLEEP (plug removed)");
+                state = SM_STATE_SLEEP;
             } else if (adc_mv >= SM_ADC_BUTTON_MV) {
-                /* Zone B — button pressed, plug body still present */
-                idle_plug_ticks     = 0;
+                /* Zone B — button pressed, plug body still present;
+                 * g_arrived_from_sleep preserved; eva_req_ticks countdown continues */
+                idle_plug_ticks      = 0;
                 idle_plug_status_adv = false;
                 sm_enter_idle_plug();
                 ESP_LOGI(TAG, "SM: VCM_AUTH -> IDLE_PLUG (button pressed)");
@@ -345,6 +387,7 @@ void state_machine_task(void *pvParams)
         case SM_STATE_CHARGE_DISABLE:
             /* Shutdown sequence completed inside sm_enter_charge_disable().
              * Determine next steady state from current plug reading. */
+            g_arrived_from_sleep = false;   /* charge completed — VCM is now awake */
             if (adc_mv <= SM_ADC_NO_PLUG_MV) {
                 /* Plug body still present after charge end */
                 idle_plug_ticks     = 0;

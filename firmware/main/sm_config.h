@@ -11,11 +11,14 @@
 #define SM_MAX_CHARGE_POWER_W      3300
 
 /**
- * When non-zero: skip VCM_AUTH state entirely.
- * IDLE_PLUG transitions directly to EVSE_ENABLE on the VCM charge command.
- * Set to 0 to re-enable: IDLE_PLUG → VCM_AUTH → EVSE_ENABLE.
+ * DEPRECATED — do not use in new logic.
+ * VCM_AUTH routing is now path-dependent via the g_arrived_from_sleep context
+ * flag, not this compile-time switch:
+ *   - Sleep path (SLEEP → WAKE → IDLE_PLUG): always uses VCM_AUTH.
+ *   - Awake path (IDLE_NO_PLUG → IDLE_PLUG): always skips VCM_AUTH.
+ * Retained here only to avoid breaking any legacy references during transition.
  */
-#define SM_SKIP_VCM_AUTH           1
+#define SM_SKIP_VCM_AUTH           1   /* DEPRECATED */
 
 /** ADC voltage above which no plug is detected (Zone C) (mV). */
 #define SM_ADC_NO_PLUG_MV          2300
