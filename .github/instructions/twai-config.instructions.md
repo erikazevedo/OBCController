@@ -98,7 +98,7 @@ whose ID is not exactly one of: `{0x1D4, 0x1DB, 0x1DC, 0x1F2, 0x50B, 0x55B, 0x5B
 
 ### TX Frames
 
-TWAI0 transmits **two frames per 100 ms cycle**:
+TWAI0 transmits **two frames per 100 ms cycle** while the TX-enable gate is active:
 
 | Frame | CAN ID |
 |---|---|
@@ -106,13 +106,67 @@ TWAI0 transmits **two frames per 100 ms cycle**:
 | Frame B | `0x5BF` |
 
 **REQUIRED:** The 100 ms transmit trigger MUST use a `gptimer` hardware alarm ISR, NOT a
-FreeRTOS timer or task delay. Call `twai_node_transmit(twai0_hdl, &frame, 0)` directly
-from the alarm ISR callback. The `timeout` parameter is ignored in ISR context.
-`CONFIG_TWAI_IO_FUNC_IN_IRAM=y` ensures `twai_node_transmit()` is in IRAM, eliminating
-Flash cache fetch latency at ISR call time.
+FreeRTOS timer or task delay. The alarm ISR MUST read `g_twai0_tx_enabled` first; if
+false, it returns immediately without calling `twai_node_transmit()`. When the flag is
+true, both frames are transmitted in sequence. `CONFIG_TWAI_IO_FUNC_IN_IRAM=y` ensures
+`twai_node_transmit()` is in IRAM, eliminating Flash cache fetch latency at ISR call time.
 
 The alarm ISR callback and all frame data buffers it accesses MUST be `IRAM_ATTR` /
 `DRAM_ATTR` respectively.
+
+### TX-Enable Gate — 0x50B VCM Wake/Sleep Command
+
+Transmission of 0x380 and 0x5BF is gated by `DRAM_ATTR volatile bool g_twai0_tx_enabled`,
+controlled entirely by the **RX dispatcher task** when it processes 0x50B frames.
+
+#### State Transitions
+
+| `d[3][7:6]` | Symbolic name | Action |
+|---|---|---|
+| `0b11` | RUN — SLEEP→RUN leading edge | Start 5-second one-shot `esp_timer`; do NOT set flag yet |
+| `0b11` | RUN — already waiting or already enabled | No-op; do not restart the timer |
+| `0b00` | SLEEP | Set `g_twai0_tx_enabled = false`; set `g_twai0_tx_pending = false`; call `esp_timer_stop()` |
+
+**REQUIRED:** The `esp_timer` one-shot callback (fires 5 s after the first `0b11` frame)
+sets `g_twai0_tx_enabled = true`. The timer is created once at init with
+`esp_timer_create()` and reused across RUN/SLEEP cycles via `esp_timer_start_once()` /
+`esp_timer_stop()`.
+
+```c
+// One-shot timer callback — runs in esp_timer task context
+static void twai0_tx_enable_cb(void *arg)
+{
+    g_twai0_tx_enabled = true;
+}
+
+// Called from RX dispatcher when a 0x50B frame is decoded
+static void handle_50b(const uint8_t *data)
+{
+    uint8_t cmd = (data[3] >> 6) & 0x03;
+    if (cmd == 0x03) {                              // RUN
+        if (!g_twai0_tx_pending && !g_twai0_tx_enabled) {
+            g_twai0_tx_pending = true;
+            esp_timer_start_once(twai0_tx_delay_timer, 5000000ULL); // 5 s
+        }
+    } else if (cmd == 0x00) {                       // SLEEP
+        g_twai0_tx_enabled  = false;
+        g_twai0_tx_pending  = false;
+        esp_timer_stop(twai0_tx_delay_timer);
+    }
+}
+```
+
+`g_twai0_tx_pending` is a sentinel that prevents the 5-second timer being restarted on
+every subsequent `0b11` frame received during the delay window.
+
+**REQUIRED:** Both `g_twai0_tx_enabled` and `g_twai0_tx_pending` MUST be declared
+`DRAM_ATTR volatile bool`. `g_twai0_tx_enabled` is read from the gptimer alarm ISR.
+
+**REQUIRED:** `twai0_tx_delay_timer` MUST be created (via `esp_timer_create()`) inside
+`twai_handler_init()`, before any call to `twai_node_enable()`.
+
+**NOTE:** The `esp_timer` callback does NOT require `IRAM_ATTR` — it only writes a
+single `volatile bool` and makes no cache-sensitive calls.
 
 ### Error Handling — REQUIRED
 
@@ -191,6 +245,8 @@ Every symbol touched from a TWAI ISR callback context MUST comply:
 | RX result buffers | `DRAM_ATTR` |
 | Error/state flag variables | `DRAM_ATTR volatile` |
 | Queue handle (for `xQueueSendFromISR`) | `DRAM_ATTR` |
+| `g_twai0_tx_enabled` (TWAI0 TX gate) | `DRAM_ATTR volatile` |
+| `g_twai0_tx_pending` (5-second delay sentinel) | `DRAM_ATTR volatile` |
 
 Failure to apply these when `CONFIG_TWAI_ISR_CACHE_SAFE=y` causes the driver to return
 `ESP_ERR_INVALID_ARG` at callback registration time.

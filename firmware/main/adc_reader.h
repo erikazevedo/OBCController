@@ -3,7 +3,7 @@
 #include "esp_adc/adc_cali.h"
 
 /* Latest averaged ADC raw value — written from ADC ISR, read from state machine task */
-extern volatile uint32_t DRAM_ATTR g_adc_raw_avg;
+extern volatile uint32_t g_adc_raw_avg;
 
 /* Calibration handle — used only in task context (not ISR-safe for concurrent callers) */
 extern adc_cali_handle_t adc_cali_hdl;

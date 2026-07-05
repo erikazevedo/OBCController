@@ -26,7 +26,29 @@ static void twai1_tx_task(void *pvParams)
 
 static void gpio_outputs_init(void)
 {
-    /* TODO: configure all digital output pins defined in gpio_config.h */
+    const uint64_t output_mask =
+        (1ULL << GPIO_CP_ENABLE)  |
+        (1ULL << GPIO_PLUG_SIG)   |
+        (1ULL << GPIO_STATUS_LED) |
+        (1ULL << GPIO_EVA_REQ)    |
+        (1ULL << GPIO_CONT_POS)   |
+        (1ULL << GPIO_CONT_NEG);
+
+    gpio_config_t cfg = {
+        .pin_bit_mask = output_mask,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&cfg));
+
+    gpio_set_level(GPIO_CP_ENABLE,  0);
+    gpio_set_level(GPIO_PLUG_SIG,   0);
+    gpio_set_level(GPIO_STATUS_LED, 0);
+    gpio_set_level(GPIO_EVA_REQ,    0);
+    gpio_set_level(GPIO_CONT_POS,   0);
+    gpio_set_level(GPIO_CONT_NEG,   0);
 }
 
 void app_main(void)
@@ -47,7 +69,8 @@ void app_main(void)
     /* 5. ADC continuous DMA, calibration, and start */
     adc_reader_init();
 
-    /* 6. TODO: gptimer_init_twai0_tx() — 100 ms periodic TWAI0 TX alarm */
+    /* 6. gptimer 100 ms periodic alarm — TWAI0 TX (gate-checked inside ISR) */
+    gptimer_init_twai0_tx();
 
     /* 7. Create tasks in order of decreasing priority */
     xTaskCreate(rx_dispatcher_task, "rx_disp",  3072, NULL,

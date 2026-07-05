@@ -11,6 +11,7 @@ idf_component_register(
         esp_driver_twai
         esp_driver_gpio
         esp_driver_mcpwm
+        esp_driver_gptimer
         esp_adc
         esp_timer
         freertos

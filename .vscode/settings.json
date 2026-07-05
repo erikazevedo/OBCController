@@ -14,5 +14,6 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=c:\\Users\\azeve\\repository\\OBCController\\build"
-  ]
+  ],
+  "cmake.sourceDirectory": "C:/Users/azeve/repository/OBCController/firmware"
 }

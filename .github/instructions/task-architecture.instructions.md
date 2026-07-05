@@ -38,18 +38,24 @@ These run at hardware interrupt priority and MUST complete in microseconds.
 ```
 gptimer alarm (hardware)
   └─► alarm ISR callback (IRAM_ATTR)
+        └─► if (!g_twai0_tx_enabled) return   ← gate check (DRAM_ATTR volatile bool)
         └─► twai_node_transmit(twai0_hdl, &frame_380, 0)
         └─► twai_node_transmit(twai0_hdl, &frame_5bf, 0)
 ```
 
 - REQUIRED: Use `gptimer` (General Purpose Timer) hardware alarm, NOT `esp_timer`,
   NOT FreeRTOS `xTimerCreate()`.
+- REQUIRED: The ISR MUST check `g_twai0_tx_enabled` (`DRAM_ATTR volatile bool`) before
+  any call to `twai_node_transmit()`. If false, return immediately.
 - REQUIRED: The alarm callback and both TX frame structs MUST be `IRAM_ATTR` / `DRAM_ATTR`.
 - REQUIRED: `CONFIG_TWAI_IO_FUNC_IN_IRAM=y` so `twai_node_transmit()` is in IRAM.
 - `timeout` parameter to `twai_node_transmit()` is ignored in ISR context (returns
   immediately if TX queue is full).
 - RECOMMENDED: alarm period = 100 000 µs. Use `gptimer_set_alarm_action()` with
   `alarm_cfg.auto_reload_on_alarm = true`.
+- `g_twai0_tx_enabled` is set true by a 5-second one-shot `esp_timer` after the RX
+  dispatcher first observes `0x50B d[3][7:6] == 0b11` (RUN). It is cleared immediately
+  to false when `0b00` (SLEEP) is received. See `twai-config.instructions.md` §TX-Enable Gate.
 
 ```c
 // gptimer configuration (REQUIRED fields)
@@ -230,6 +236,8 @@ Every symbol in an ISR hot path MUST be in internal RAM:
 | `g_pwm_duty_us`, `g_pwm_period_us`, `g_pwm_signal_valid` | `DRAM_ATTR volatile` | Written from MCPWM ISR, read from task |
 | `g_adc_raw_avg` | `DRAM_ATTR volatile` | Written from ADC ISR, read from task |
 | TWAI error/bus-off flags | `DRAM_ATTR volatile` | Written from TWAI ISR, read from state machine |
+| `g_twai0_tx_enabled` | `DRAM_ATTR volatile` | Read from gptimer alarm ISR; written from `esp_timer` callback and RX dispatcher |
+| `g_twai0_tx_pending` | `DRAM_ATTR volatile` | Written from RX dispatcher task; sentinel preventing timer restart during 5-second delay |
 
 `volatile` is REQUIRED on all variables shared between ISR writers and task readers to
 prevent compiler caching into registers.
