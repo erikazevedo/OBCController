@@ -116,7 +116,10 @@ static bool IRAM_ATTR twai0_error_cb(twai_node_handle_t handle,
                                       const twai_error_event_data_t *edata,
                                       void *user_ctx)
 {
-    ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai0 err 0x%x", (unsigned int)edata->err_flags.val);
+    /* Skip log if arb_lost is the only flag — normal CAN bus event */
+    if (edata->err_flags.val != 0x1u) {
+        ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai0 err 0x%x", (unsigned int)edata->err_flags.val);
+    }
     return false;
 }
 

@@ -1,0 +1,24 @@
+name: Firmware Build
+
+on:
+  push:
+    branches: [development]
+    paths: [firmware/**, .github/workflows/firmware-build.yml]
+  pull_request:
+    branches: [development]
+    paths: [firmware/**]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v6.0
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build firmware
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py build
