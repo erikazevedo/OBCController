@@ -328,10 +328,20 @@ Verified against every frame in ZE0 AC-charge captures.
 
 | Byte | Bits | Field | Decoding Rule |
 |------|------|-------|---------------|
-| d[0–2] | — | Not decoded | — |
+| d[0–1] | — | Not decoded | — |
+| d[2] | [7:0] | EV_SystemState | 0x00 = OFF; 0x04 = ON |
 | d[3] | [7:6] | WakeUpSleepCmd | 0b11 = RUN; 0b00 = SLEEP; any non-zero value = vehicle on |
 | d[3] | [5:0] | Not decoded | — |
 | d[4–6] | — | Not decoded | — |
+
+### EV_SystemState Values (d[2])
+
+| Value | Meaning |
+|-------|---------|
+| 0x00 | OFF |
+| 0x02 | BOOT1 — early boot; TX broadcast starts |
+| 0x04 | ON |
+| 0x06 | BOOT2 |
 
 > Minimum required DLC to decode: 4 bytes (d[0]–d[3]).
 

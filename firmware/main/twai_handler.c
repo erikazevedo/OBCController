@@ -8,7 +8,6 @@
 #include "esp_twai_onchip.h"
 #include "esp_twai_types.h"
 #include "driver/gptimer.h"
-#include "esp_timer.h"
 
 static const char *TAG = "twai";
 
@@ -18,11 +17,8 @@ twai_node_handle_t twai1_hdl = NULL;
 volatile bool DRAM_ATTR g_twai0_bus_off    = false;
 volatile bool DRAM_ATTR g_twai1_bus_off    = false;
 volatile bool DRAM_ATTR g_twai0_tx_enabled = false;
-volatile bool DRAM_ATTR g_twai0_tx_pending = false;
 
 QueueHandle_t DRAM_ATTR rx_queue = NULL;
-
-esp_timer_handle_t twai0_tx_delay_timer = NULL;
 
 /* ── TX Frame Data Buffers ────────────────────────────────────────────────
  * DRAM_ATTR: accessible from the gptimer alarm ISR when Flash cache is off.
@@ -43,12 +39,6 @@ static DRAM_ATTR twai_frame_t frame_380;
 static DRAM_ATTR twai_frame_t frame_5bf;
 static DRAM_ATTR twai_frame_t frame_050;
 
-/* ── esp_timer one-shot callback ─────────────────────────────────────────── */
-static void twai0_tx_enable_cb(void *arg)
-{
-    g_twai0_tx_enabled = true;
-}
-
 /* ── ISR-safe log tag ────────────────────────────────────────────────────── */
 static DRAM_ATTR const char TWAI_ISR_TAG[] = "twai";
 
@@ -67,7 +57,8 @@ static void twai0_recovery_task(void *pvParams)
 static inline bool IRAM_ATTR twai0_id_accepted(uint32_t id)
 {
     return (id == 0x1D4u || id == 0x1DBu || id == 0x1DCu || id == 0x1F2u ||
-            id == 0x50Bu || id == 0x55Bu || id == 0x5BCu);
+            id == 0x50Bu || id == 0x55Bu || id == 0x5BCu ||
+            id == 0x603u || id == 0x68Cu);
 }
 
 static inline bool IRAM_ATTR twai1_id_accepted(uint32_t id)
@@ -275,14 +266,6 @@ void twai_handler_init(void)
         .buffer     = frame_050_data,
         .buffer_len = 8,
     };
-
-    /* ── 5-second TX-enable delay timer ─────────────────────────────── */
-    esp_timer_create_args_t timer_args = {
-        .callback = twai0_tx_enable_cb,
-        .arg      = NULL,
-        .name     = "twai0_tx_delay",
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &twai0_tx_delay_timer));
 }
 
 void gptimer_init_twai0_tx(void)
@@ -305,6 +288,9 @@ void gptimer_init_twai0_tx(void)
         .clk_src       = GPTIMER_CLK_SRC_DEFAULT,
         .direction     = GPTIMER_COUNT_UP,
         .resolution_hz = 1000000,   /* 1 MHz → 1 µs per tick */
+        .intr_priority = 3,         /* must match TWAI intr_priority — prevents TWAI ISR
+                                     * (level 3) from preempting this ISR while it holds
+                                     * the TWAI driver spinlock inside twai_node_transmit() */
     };
     ESP_ERROR_CHECK(gptimer_new_timer(&timer_cfg, &timer));
 

@@ -4,7 +4,6 @@
 #include "esp_attr.h"
 #include "esp_twai.h"
 #include "esp_twai_types.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
@@ -16,14 +15,8 @@ extern twai_node_handle_t twai1_hdl;
 extern volatile bool g_twai0_bus_off;
 extern volatile bool g_twai1_bus_off;
 
-/* TX-enable gate — read from gptimer alarm ISR; written from esp_timer callback and RX dispatcher */
+/* TX-enable gate — read from gptimer alarm ISR; written from RX dispatcher */
 extern volatile bool g_twai0_tx_enabled;
-
-/* Sentinel preventing the 5-second delay timer from restarting on duplicate RUN frames */
-extern volatile bool g_twai0_tx_pending;
-
-/* One-shot 5-second esp_timer — created once in twai_handler_init(), reused across RUN/SLEEP cycles */
-extern esp_timer_handle_t twai0_tx_delay_timer;
 
 /* RX event passed through the shared queue */
 typedef struct {

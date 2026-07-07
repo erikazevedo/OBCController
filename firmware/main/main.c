@@ -78,6 +78,7 @@ void app_main(void)
 
     xTaskCreate(twai1_tx_task,      "twai1_tx", 2048, NULL,
                 configMAX_PRIORITIES - 3, &twai1_tx_task_hdl);
+    vTaskSuspend(twai1_tx_task_hdl);   /* SLEEP state at boot — TWAI1 TX must be silent */
 
     xTaskCreate(state_machine_task, "state_sm", 4096, NULL,
                 configMAX_PRIORITIES - 4, &state_machine_task_hdl);

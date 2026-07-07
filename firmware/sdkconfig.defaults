@@ -14,3 +14,6 @@ CONFIG_LOG_DEFAULT_LEVEL=2
 
 # FreeRTOS tick rate
 CONFIG_FREERTOS_HZ=1000
+
+# Interrupt WDT — must exceed worst-case contactor delay (500 ms) plus margin
+CONFIG_ESP_INT_WDT_TIMEOUT_MS=800

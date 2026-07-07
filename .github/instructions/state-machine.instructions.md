@@ -223,9 +223,10 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   5. Set `frame_380.d[4][6] = 0` (AC relay bit cleared).
   6. Set `frame_5bf.d[4] = 0x28` (IDLE).
   7. `GPIO_STATUS_LED = LOW`.
-- **Exit transition** (after sequence completes):
-  - `adc_mv <= SM_ADC_NO_PLUG_MV` → IDLE_PLUG *(plug body still present after charge end)*
-  - `adc_mv > SM_ADC_NO_PLUG_MV` → IDLE_NO_PLUG *(plug removed)*
+- **Exit transition** (after sequence completes — evaluated in priority order):
+  1. `vcm_sleep` (`0x50B d[3][7:6] == 0b00`) → SLEEP *(charging no longer active; VCM sleep intent propagates through shutdown. `0x50B` is periodic at 100 ms so the flag re-arms during the 500 ms contactor delay and is reliably set at exit.)*
+  2. `adc_mv <= SM_ADC_NO_PLUG_MV` → IDLE_PLUG *(plug body still present after charge end)*
+  3. `adc_mv > SM_ADC_NO_PLUG_MV` → IDLE_NO_PLUG *(plug removed)*
 - **TWAI0 TX obligations**: `0x380` and `0x5BF` continue uninterrupted (gptimer ISR still running). Content is updated in steps 5–6 above.
 - **TWAI1 actions**: One best-effort `frame_050` with `Lear_ChargeEnable = 0` sent before task suspend (step 1–2).
 - **Timeout**: None — exits as soon as shutdown sequence completes.
@@ -258,8 +259,9 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 | EVSE_ENABLE | CHARGING | — | Any TWAI1 frame received (0x616 / 0x617 / 0x618 / 0x274) | Normal |
 | EVSE_ENABLE | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, `0x50B` SLEEP, or `0x1DB` failsafe | High |
 | CHARGING | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, SOC ≥ cutoff, `0x50B` SLEEP, `0x1DB` failsafe, `0x1D4` interrupted | High/Normal |
-| CHARGE_DISABLE | IDLE_PLUG | `adc_mv <= SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
-| CHARGE_DISABLE | IDLE_NO_PLUG | `adc_mv > SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
+| CHARGE_DISABLE | SLEEP | `vcm_sleep` | Shutdown sequence complete; VCM sleep re-received during 500 ms contactor delay | High |
+| CHARGE_DISABLE | IDLE_PLUG | `!vcm_sleep` AND `adc_mv <= SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
+| CHARGE_DISABLE | IDLE_NO_PLUG | `!vcm_sleep` AND `adc_mv > SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
 
 ---
 

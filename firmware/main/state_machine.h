@@ -33,6 +33,9 @@ extern volatile bool g_sm_twai1_rxd;
 /** Decoded SOC percentage from 0x55B (0.0–100.0 %). 32-bit aligned — atomic on RISC-V. */
 extern volatile float g_sm_soc_pct;
 
+/** Set by 0x50B handler: true when EV system state d[2] == 0x04 (ON), false when 0x00 (OFF). */
+extern volatile bool g_sm_ev_on;
+
 /**
  * FreeRTOS task body for the application state machine.
  * Priority: configMAX_PRIORITIES - 4 (21). Stack: 4096 bytes.

@@ -35,6 +35,7 @@ volatile bool  DRAM_ATTR g_sm_lbc_failsafe       = false;
 volatile bool  DRAM_ATTR g_sm_charge_interrupted = false;
 volatile bool  DRAM_ATTR g_sm_twai1_rxd          = false;
 volatile float DRAM_ATTR g_sm_soc_pct            = 0.0f;
+volatile bool  DRAM_ATTR g_sm_ev_on              = false;
 
 /* ── State Entry Helpers ────────────────────────────────────────────────── */
 
@@ -317,8 +318,13 @@ void state_machine_task(void *pvParams)
             break;
 
         case SM_STATE_EVSE_ENABLE:
-            /* High-priority abort checks first */
-            if (vcm_sleep || lbc_fail || adc_mv >= SM_ADC_BUTTON_MV) {
+            /* VCM sleep overrides everything — shut down and go dark immediately */
+            if (vcm_sleep) {
+                sm_enter_charge_disable();
+                sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: EVSE_ENABLE -> SLEEP (VCM_SLEEP)");
+                state = SM_STATE_SLEEP;
+            } else if (lbc_fail || adc_mv >= SM_ADC_BUTTON_MV) {
                 sm_enter_charge_disable();
                 ESP_LOGI(TAG, "SM: EVSE_ENABLE -> CHARGE_DISABLE (abort)");
                 state = SM_STATE_CHARGE_DISABLE;
@@ -331,8 +337,13 @@ void state_machine_task(void *pvParams)
             break;
 
         case SM_STATE_CHARGING:
-            if (adc_mv >= SM_ADC_BUTTON_MV  /* Zone B or C — button/plug removal */
-                    || vcm_sleep
+            /* VCM sleep overrides everything — shut down and go dark immediately */
+            if (vcm_sleep) {
+                sm_enter_charge_disable();
+                sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: CHARGING -> SLEEP (VCM_SLEEP)");
+                state = SM_STATE_SLEEP;
+            } else if (adc_mv >= SM_ADC_BUTTON_MV  /* Zone B or C — button/plug removal */
                     || lbc_fail
                     || chg_int
                     || soc_pct >= SM_SOC_CUTOFF_PCT) {
@@ -344,8 +355,14 @@ void state_machine_task(void *pvParams)
 
         case SM_STATE_CHARGE_DISABLE:
             /* Shutdown sequence completed inside sm_enter_charge_disable().
-             * Determine next steady state from current plug reading. */
-            if (adc_mv <= SM_ADC_NO_PLUG_MV) {
+             * Determine next steady state. VCM sleep takes priority; the 0x50B
+             * message is periodic (100 ms) so the flag re-arms during the 500 ms
+             * shutdown delay and is reliably set here when VCM wants to sleep. */
+            if (vcm_sleep) {
+                sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> SLEEP (VCM_SLEEP)");
+                state = SM_STATE_SLEEP;
+            } else if (adc_mv <= SM_ADC_NO_PLUG_MV) {
                 /* Plug body still present after charge end */
                 idle_plug_ticks     = 0;
                 idle_plug_status_adv = false;

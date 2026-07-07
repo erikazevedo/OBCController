@@ -7,7 +7,6 @@
     "board/esp32c6-builtin.cfg"
   ],
   "idf.customExtraVars": {
-    "OPENOCD_USB_ADAPTER_LOCATION": "1-1",
     "IDF_TARGET": "esp32c6"
   },
   "clangd.path": "C:\\Espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
