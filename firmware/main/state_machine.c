@@ -21,6 +21,7 @@ typedef enum {
     SM_STATE_EVSE_ENABLE,
     SM_STATE_CHARGING,
     SM_STATE_CHARGE_DISABLE,
+    SM_STATE_CHARGE_DONE,
 } sm_state_t;
 
 /* ── Task Handles ───────────────────────────────────────────────────────── */
@@ -142,6 +143,13 @@ static void sm_enter_charge_disable(void)
     gpio_set_level(GPIO_STATUS_LED, 0);
 }
 
+static void sm_enter_charge_done(void)
+{
+    frame_5bf_data[2] = 0x00;               /* clear J1772 current field */
+    /* frame_5bf_data[4] == 0x28 already set by sm_enter_charge_disable() */
+    gpio_set_level(GPIO_STATUS_LED, 1);     /* sustained on = charge complete */
+}
+
 /* ── J1772 Current Derivation ───────────────────────────────────────────── */
 /*
  * Compute J1772 AC current limit from MCPWM pilot duty cycle.
@@ -180,6 +188,9 @@ void state_machine_task(void *pvParams)
     /* IDLE_PLUG 0x10→0x18 timing: advance after 10 SM cycles (100 ms) */
     static int idle_plug_ticks          = 0;
     static bool idle_plug_status_adv    = false;
+
+    /* Normal charge completion flag — set when SOC cutoff triggers CHARGE_DISABLE */
+    static bool charge_done_normal      = false;
 
     /* J1772 current derived in IDLE_PLUG; frozen at VCM charge command */
     float session_amps = 0.0f;
@@ -292,6 +303,10 @@ void state_machine_task(void *pvParams)
             }
             break;
 
+        // No idea how tf vcm auth is supposed to work. in testing could never get it to trigger the beep
+        // this state is skipped if SM_SKIP_VCM_AUTH is defined
+        // of course this means the car has to be powered ON so the main contactor is closed
+        // and the vcm essentially has no idea we are charging
         case SM_STATE_VCM_AUTH:
             /* High-priority abort checks first */
             if (vcm_sleep) {
@@ -317,17 +332,27 @@ void state_machine_task(void *pvParams)
             }
             break;
 
+        // Transient state where EVSE is enabled and we are waiting for OBC to boot
         case SM_STATE_EVSE_ENABLE:
             /* VCM sleep overrides everything — shut down and go dark immediately */
+
+            // Car turned off
             if (vcm_sleep) {
                 sm_enter_charge_disable();
                 sm_enter_sleep();
                 ESP_LOGI(TAG, "SM: EVSE_ENABLE -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
+
+            // Button pressed/plug pulled or battery set a failsafe code
+            // should we check for lbc failsafe in other states perhaps?
+            // again here if the fault is persistent the state machine will repeatedly turn the EVSE on and off
+            // which we probably do not want
             } else if (lbc_fail || adc_mv >= SM_ADC_BUTTON_MV) {
                 sm_enter_charge_disable();
                 ESP_LOGI(TAG, "SM: EVSE_ENABLE -> CHARGE_DISABLE (abort)");
                 state = SM_STATE_CHARGE_DISABLE;
+
+            // OBC has responded, proceed to charging
             } else if (t1_rxd) {
                 /* OBC alive — any TWAI1 frame received */
                 sm_enter_charging(session_amps);
@@ -338,17 +363,27 @@ void state_machine_task(void *pvParams)
 
         case SM_STATE_CHARGING:
             /* VCM sleep overrides everything — shut down and go dark immediately */
+
+            // Car turned off
             if (vcm_sleep) {
                 sm_enter_charge_disable();
                 sm_enter_sleep();
                 ESP_LOGI(TAG, "SM: CHARGING -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
+
+            // Reached target SOC, set flag to go to charge done state
+            } else if (soc_pct >= SM_SOC_CUTOFF_PCT) {
+                charge_done_normal = true;      /* mark as normal completion */
+                sm_enter_charge_disable();
+                ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE (SOC cutoff)");
+                state = SM_STATE_CHARGE_DISABLE;
+            
+            // Plug pulled
             } else if (adc_mv >= SM_ADC_BUTTON_MV  /* Zone B or C — button/plug removal */
                     || lbc_fail
-                    || chg_int
-                    || soc_pct >= SM_SOC_CUTOFF_PCT) {
+                    || chg_int) {
                 sm_enter_charge_disable();
-                ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE");
+                ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE (abort)");
                 state = SM_STATE_CHARGE_DISABLE;
             }
             break;
@@ -358,27 +393,74 @@ void state_machine_task(void *pvParams)
              * Determine next steady state. VCM sleep takes priority; the 0x50B
              * message is periodic (100 ms) so the flag re-arms during the 500 ms
              * shutdown delay and is reliably set here when VCM wants to sleep. */
+
+            // Car turned off
             if (vcm_sleep) {
+                charge_done_normal = false;
                 sm_enter_sleep();
                 ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> SLEEP (VCM_SLEEP)");
                 state = SM_STATE_SLEEP;
+
+            // charge completed to target SOC and plug still present
+            } else if (charge_done_normal && adc_mv <= SM_ADC_NO_PLUG_MV) {
+                /* Normal charge completion — plug still present */
+                charge_done_normal = false;
+                sm_enter_charge_done();
+                ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> CHARGE_DONE (SOC cutoff, plug present)");
+                state = SM_STATE_CHARGE_DONE;
+
+            // Aborted for some other reason but plug still present
+            // Charge will immediately restart
+            // should we add some kind of counter so it doesn't loop endlessly if there is a persistent fault?
             } else if (adc_mv <= SM_ADC_NO_PLUG_MV) {
-                /* Plug body still present after charge end */
+                /* Aborted/faulted but plug still present */
+                charge_done_normal = false;
                 idle_plug_ticks     = 0;
                 idle_plug_status_adv = false;
                 i_max_A             = 0.0f;
                 sm_enter_idle_plug();
                 ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> IDLE_PLUG");
                 state = SM_STATE_IDLE_PLUG;
+
             } else {
+                charge_done_normal = false;
                 sm_enter_idle_no_plug();
                 ESP_LOGI(TAG, "SM: CHARGE_DISABLE -> IDLE_NO_PLUG");
                 state = SM_STATE_IDLE_NO_PLUG;
             }
             break;
+
+        // Chill until plug is removed or vehicle turned off.
+        // Added because when it was reaching the SOC cutoff, it was reverting to idle,
+        // causing the charge to immediately restart and immedately hit the cutoff again,
+        // repeating the cycle and spamming all the relays
+        case SM_STATE_CHARGE_DONE:
+            // Car turned off
+            if (vcm_sleep) {
+                gpio_set_level(GPIO_STATUS_LED, 0);
+                sm_enter_sleep();
+                ESP_LOGI(TAG, "SM: CHARGE_DONE -> SLEEP (VCM_SLEEP)");
+                state = SM_STATE_SLEEP;
+
+            // Plug removed
+            } else if (adc_mv > SM_ADC_NO_PLUG_MV) {
+                gpio_set_level(GPIO_STATUS_LED, 0);
+                sm_enter_idle_no_plug();
+                ESP_LOGI(TAG, "SM: CHARGE_DONE -> IDLE_NO_PLUG (plug removed)");
+                state = SM_STATE_IDLE_NO_PLUG;
+            } 
+            // else if (!g_sm_ev_on) {
+            //     gpio_set_level(GPIO_STATUS_LED, 0);
+            //     sm_enter_idle_no_plug();
+            //     ESP_LOGI(TAG, "SM: CHARGE_DONE -> IDLE_NO_PLUG (EV status 0x00)");
+            //     state = SM_STATE_IDLE_NO_PLUG;
+            // }
+            break;
         }
 
         /* ── 5. Safety override: immediate contactor de-assert ──────────── */
+        // Note the current hardware experiences both of these conditions during a normal charge
+        // So keep this commented until ...someone... figures that out
         // if (g_twai0_bus_off || !pwm_valid) {
         //     gpio_set_level(GPIO_CONT_POS, 0);
         //     gpio_set_level(GPIO_CONT_NEG, 0);

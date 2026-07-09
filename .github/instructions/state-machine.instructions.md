@@ -195,7 +195,7 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   - `0x380` at 100 ms: AC relay bit = 1; power = `SM_MAX_CHARGE_POWER_W / 100`.
   - `0x5BF` at 100 ms: `d[4]` = `0x60` (CHARGING); `d[2]` = `(uint8_t)(g_session_ac_current_A * 5.0f)` (J1772 available current, `amps × 5` — set on CHARGING entry, held constant for session).
 - **TWAI0 RX triggers**:
-  - `0x55B` decoded SOC ≥ `SM_SOC_CUTOFF_PCT` → CHARGE_DISABLE *(normal completion)*
+  - `0x55B` decoded SOC ≥ `SM_SOC_CUTOFF_PCT` → set `charge_done_normal = true`, then → CHARGE_DISABLE *(normal completion — flag routes to CHARGE_DONE after shutdown sequence)*
   - `0x50B d[3][7:6] == 0b00` (SLEEP) → CHARGE_DISABLE
   - `0x1DB d[1][2:0] != 0b000` (LBC failsafe) → CHARGE_DISABLE
   - `0x1D4 d[6] == 0x8C` (STATUS_INTERRUPTED) → CHARGE_DISABLE *(VCM signalled charge interrupted)*
@@ -241,6 +241,32 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 
 ---
 
+### CHARGE_DONE
+
+- **Description**: Steady-state entered after a successful charge session (SOC cutoff reached). Controller remains in a minimal-power, plug-present configuration. TWAI0 TX continues (same content as IDLE_PLUG). TWAI1 TX stays suspended. No HV power active. The EV may show a "charge complete" indication via the 0x5BF status byte and sustained STATUS_LED.
+- **Entry actions**:
+  - `frame_5bf.d[2] = 0x00` — clear the J1772 current field (session ended).
+  - `frame_5bf.d[4] = 0x28` (IDLE) — already set by `sm_enter_charge_disable()` step 6; no additional write needed.
+  - `GPIO_STATUS_LED = HIGH` — sustained LED-on to indicate charge complete (distinct from blinking or off states used elsewhere).
+  - TWAI1 TX task remains suspended (already done in CHARGE_DISABLE).
+- **Exit actions**:
+  - `GPIO_STATUS_LED = LOW` — cleared before entering downstream state.
+- **TWAI0 TX obligations**:
+  - `0x380` at 100 ms: AC relay bit = 0; power = `SM_MAX_CHARGE_POWER_W / 100`.
+  - `0x5BF` at 100 ms: status byte = `0x28` (IDLE); J1772 current field = `0x00`.
+- **TWAI0 RX triggers**:
+  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(high priority)*
+- **ADC trigger**:
+  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
+- **EV status trigger**:
+  - `g_sm_ev_on == false` (0x50B `d[2] == 0x00` — EV system powers down) → IDLE_NO_PLUG
+- **TWAI1 actions**: None. TX task remains suspended.
+- **Timeout**: None — holds indefinitely until plug removal, VCM sleep, or EV status off.
+
+> **Re-charge prevention note:** If `g_sm_ev_on` becomes `false` and then `true` again while the plug is still inserted (EV soft-cycles), the SM will transition `IDLE_NO_PLUG → IDLE_PLUG` and could re-arm a new session. If this is undesirable, a "session exhausted" latch cleared only on plug removal should be added.
+
+---
+
 ## Transitions
 
 | From | To | Guard | Trigger | Priority |
@@ -260,8 +286,12 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 | EVSE_ENABLE | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, `0x50B` SLEEP, or `0x1DB` failsafe | High |
 | CHARGING | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, SOC ≥ cutoff, `0x50B` SLEEP, `0x1DB` failsafe, `0x1D4` interrupted | High/Normal |
 | CHARGE_DISABLE | SLEEP | `vcm_sleep` | Shutdown sequence complete; VCM sleep re-received during 500 ms contactor delay | High |
-| CHARGE_DISABLE | IDLE_PLUG | `!vcm_sleep` AND `adc_mv <= SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
-| CHARGE_DISABLE | IDLE_NO_PLUG | `!vcm_sleep` AND `adc_mv > SM_ADC_NO_PLUG_MV` | Shutdown sequence complete | Normal |
+| CHARGE_DISABLE | CHARGE_DONE | `charge_done_normal` AND `adc_mv <= SM_ADC_NO_PLUG_MV` | Shutdown complete, SOC cutoff path, plug present | Normal |
+| CHARGE_DISABLE | IDLE_PLUG | `!vcm_sleep` AND `!charge_done_normal` AND `adc_mv <= SM_ADC_NO_PLUG_MV` | Shutdown complete, aborted/faulted, plug present | Normal |
+| CHARGE_DISABLE | IDLE_NO_PLUG | `!vcm_sleep` AND `adc_mv > SM_ADC_NO_PLUG_MV` | Shutdown sequence complete, plug removed | Normal |
+| CHARGE_DONE | SLEEP | — | `vcm_sleep` (0x50B SLEEP) | High |
+| CHARGE_DONE | IDLE_NO_PLUG | — | `adc_mv > SM_ADC_NO_PLUG_MV` (plug removed) | Normal |
+| CHARGE_DONE | IDLE_NO_PLUG | — | `g_sm_ev_on == false` (EV status byte = 0x00) | Normal |
 
 ---
 
