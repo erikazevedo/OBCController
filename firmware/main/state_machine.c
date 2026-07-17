@@ -434,6 +434,10 @@ void state_machine_task(void *pvParams)
         // Added because when it was reaching the SOC cutoff, it was reverting to idle,
         // causing the charge to immediately restart and immedately hit the cutoff again,
         // repeating the cycle and spamming all the relays
+        // 2026-07-17 because the car is still on in this state it actually is discharging
+        // if left in this state for too long, the SOC will drop
+        // observed a 5% drop over 30min to an hour
+        // so let's add a trigger for it to go back to charging if the SOC drops below a certain threshold
         case SM_STATE_CHARGE_DONE:
             // Car turned off
             if (vcm_sleep) {
@@ -448,7 +452,15 @@ void state_machine_task(void *pvParams)
                 sm_enter_idle_no_plug();
                 ESP_LOGI(TAG, "SM: CHARGE_DONE -> IDLE_NO_PLUG (plug removed)");
                 state = SM_STATE_IDLE_NO_PLUG;
-            } 
+
+            // SOC dropped below the restart threshold, resume charging
+            } else if (soc_pct <= (SM_SOC_CUTOFF_PCT - SM_SOC_RESTART_HYST)) {
+                gpio_set_level(GPIO_STATUS_LED, 0);
+                sm_enter_idle_plug();
+                ESP_LOGI(TAG, "SM: CHARGE_DONE -> IDLE_PLUG (SOC dropped to %.1f%%)", soc_pct);
+                state = SM_STATE_IDLE_PLUG;
+            }
+
             // else if (!g_sm_ev_on) {
             //     gpio_set_level(GPIO_STATUS_LED, 0);
             //     sm_enter_idle_no_plug();

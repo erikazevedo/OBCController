@@ -7,6 +7,9 @@
 /** SOC level at which a charging session is terminated (%). */
 #define SM_SOC_CUTOFF_PCT          80.0f
 
+/** SOC hysteresis for restarting a charging session (%). */
+#define SM_SOC_RESTART_HYST       2.0f
+
 /** Maximum OBC charge power advertised to VCM via 0x380 (W). */
 #define SM_MAX_CHARGE_POWER_W      3300
 
