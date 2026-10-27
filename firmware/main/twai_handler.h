@@ -39,6 +39,30 @@ extern uint8_t frame_380_data[8];   /* 0x380  OBC Status        */
 extern uint8_t frame_5bf_data[8];   /* 0x5BF  OBC Charge State  */
 extern uint8_t frame_050_data[8];   /* 0x050  Lear_Control      */
 
+/* ── Custom Display Unit Frames (TWAI0) ───────────────────────────────────────────────
+ * Not part of the stock ZE0 EV-CAN bus; 0x6C0/0x6C1 were not seen in any
+ * captured log or DBC.  Both frames share one layout:
+ *   d[0]    target voltage, raw * 2 V
+ *   d[1]    target SOC, 1 % per bit
+ *   d[2..6] reserved, 0
+ *   d[7]    checksum = DISPLAY_CSUM_SEED ^ d[0] ^ ... ^ d[6]
+ *   0x6C0   display -> OBCController: overwrite g_sm_target_voltage_v / g_sm_target_soc_pct
+ *   0x6C1   OBCController -> display: current values, every 500 ms while TX is enabled
+ * ---------------------------------------------------------------------------*/
+#define CAN_ID_DISPLAY_CMD      0x6C0u
+#define CAN_ID_DISPLAY_ECHO     0x6C1u
+#define DISPLAY_CSUM_SEED       0xA5u
+
+/* Seed makes an all-zero frame invalid. Inlined so it is safe inside the gptimer ISR. */
+static inline __attribute__((always_inline)) uint8_t display_frame_csum(const uint8_t *d)
+{
+    uint8_t c = DISPLAY_CSUM_SEED;
+    for (int i = 0; i < 7; i++) {
+        c ^= d[i];
+    }
+    return c;
+}
+
 /**
  * Initialise TWAI0 and TWAI1 nodes, apply acceptance filters, register
  * all event callbacks, and create twai0_tx_delay_timer.

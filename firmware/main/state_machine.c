@@ -38,6 +38,27 @@ volatile bool  DRAM_ATTR g_sm_twai1_rxd          = false;
 volatile float DRAM_ATTR g_sm_soc_pct            = 0.0f;
 volatile bool  DRAM_ATTR g_sm_ev_on              = false;
 
+volatile uint16_t DRAM_ATTR g_sm_target_voltage_v = SM_LEAR_TARGET_VOLTAGE_V;
+volatile uint8_t  DRAM_ATTR g_sm_target_soc_pct   = (uint8_t)SM_SOC_CUTOFF_PCT;
+
+/* Voltage currently encoded in frame_050_data[2..3] */
+static uint16_t s_frame050_voltage_v = 0;
+static portMUX_TYPE s_frame050_lock = portMUX_INITIALIZER_UNLOCKED;
+
+/* Both bytes change inside one critical section so the higher-priority TWAI1 TX task never sees half an update */
+static void sm_encode_frame_050_voltage(void)
+{
+    uint16_t volts    = g_sm_target_voltage_v;
+    uint16_t volt_raw = (uint16_t)(volts * 10u);
+
+    portENTER_CRITICAL(&s_frame050_lock);
+    frame_050_data[2] = (uint8_t)(volt_raw >> 8);
+    frame_050_data[3] = (uint8_t)(volt_raw & 0xFFu);
+    portEXIT_CRITICAL(&s_frame050_lock);
+
+    s_frame050_voltage_v = volts;
+}
+
 /* ── State Entry Helpers ────────────────────────────────────────────────── */
 
 static void sm_enter_sleep(void)
@@ -95,13 +116,11 @@ static void sm_enter_evse_enable(void)
 static void sm_enter_charging(float session_amps)
 {
     /* Encode frame_050 fully before resuming TWAI1 TX task */
-    uint16_t volt_raw = (uint16_t)(SM_LEAR_TARGET_VOLTAGE_V * 10u);
     uint16_t curr_raw = (uint16_t)(session_amps * 10.0f);
 
     frame_050_data[0] = 0x00;
     frame_050_data[1] = 0xDC;
-    frame_050_data[2] = (uint8_t)(volt_raw >> 8);
-    frame_050_data[3] = (uint8_t)(volt_raw & 0xFFu);
+    sm_encode_frame_050_voltage();
     frame_050_data[4] = 0x00;
     frame_050_data[5] = (uint8_t)(curr_raw >> 8);
     frame_050_data[6] = (uint8_t)(curr_raw & 0xFFu);
@@ -217,7 +236,7 @@ void state_machine_task(void *pvParams)
         bool chg_int    = g_sm_charge_interrupted; g_sm_charge_interrupted = false;
         bool t1_rxd     = g_sm_twai1_rxd;  g_sm_twai1_rxd  = false;
         float soc_pct   = g_sm_soc_pct;
-
+        float target_soc_pct = (float)g_sm_target_soc_pct;
         /* ── 4. State machine ───────────────────────────────────────────── */
         switch (state) {
 
@@ -372,7 +391,7 @@ void state_machine_task(void *pvParams)
                 state = SM_STATE_SLEEP;
 
             // Reached target SOC, set flag to go to charge done state
-            } else if (soc_pct >= SM_SOC_CUTOFF_PCT) {
+            } else if (soc_pct >= target_soc_pct) {
                 charge_done_normal = true;      /* mark as normal completion */
                 sm_enter_charge_disable();
                 ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE (SOC cutoff)");
@@ -385,6 +404,9 @@ void state_machine_task(void *pvParams)
                 sm_enter_charge_disable();
                 ESP_LOGI(TAG, "SM: CHARGING -> CHARGE_DISABLE (abort)");
                 state = SM_STATE_CHARGE_DISABLE;
+            } else if (g_sm_target_voltage_v != s_frame050_voltage_v) {
+                /* Display changed the target voltage mid-session */
+                sm_encode_frame_050_voltage();
             }
             break;
 
@@ -454,7 +476,7 @@ void state_machine_task(void *pvParams)
                 state = SM_STATE_IDLE_NO_PLUG;
 
             // SOC dropped below the restart threshold, resume charging
-            } else if (soc_pct <= (SM_SOC_CUTOFF_PCT - SM_SOC_RESTART_HYST)) {
+            } else if (soc_pct <= (target_soc_pct - SM_SOC_RESTART_HYST)) {
                 gpio_set_level(GPIO_STATUS_LED, 0);
                 sm_enter_idle_plug();
                 ESP_LOGI(TAG, "SM: CHARGE_DONE -> IDLE_PLUG (SOC dropped to %.1f%%)", soc_pct);

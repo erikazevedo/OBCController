@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_attr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,6 +36,18 @@ extern volatile float g_sm_soc_pct;
 
 /** Set by 0x50B handler: true when EV system state d[2] == 0x04 (ON), false when 0x00 (OFF). */
 extern volatile bool g_sm_ev_on;
+
+/* ── Runtime Settings ─────────────────────────────────────────────────────────
+ * Initialised from sm_config.h defaults at startup; overwritten by the 0x6C0
+ * handler (rx_dispatcher) and advertised on 0x6C1 from the gptimer ISR.
+ * Integer types so the ISR needs no soft-float.
+ * ---------------------------------------------------------------------------*/
+
+/** Lear OBC DC target voltage (V). */
+extern volatile uint16_t g_sm_target_voltage_v;
+
+/** SOC (%) at which a charging session is terminated. */
+extern volatile uint8_t g_sm_target_soc_pct;
 
 /**
  * FreeRTOS task body for the application state machine.

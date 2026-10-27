@@ -9,12 +9,12 @@ All tunable parameters MUST be defined as macros in a dedicated config header (e
 
 | Parameter | Default | Macro |
 |---|---|---|
-| SOC charge cutoff | 80.0 % | `SM_SOC_CUTOFF_PCT 80.0f` |
+| SOC charge cutoff | 80.0 % | `SM_SOC_CUTOFF_PCT 80.0f` — startup default for `g_sm_target_soc_pct`; overwritten at runtime by CAN 0x6C0 (range `SM_TARGET_SOC_MIN_PCT`–`SM_TARGET_SOC_MAX_PCT`) |
 | Max OBC charge power | 3300 W | `SM_MAX_CHARGE_POWER_W 3300` |
 | VCM auth bypass | enabled | `SM_SKIP_VCM_AUTH 1` — set to `0` to re-enable VCM_AUTH state (IDLE_PLUG → VCM_AUTH → EVSE_ENABLE) |
 | ADC no-plug threshold | 2300 mV | `SM_ADC_NO_PLUG_MV 2300` — above this = no plug (Zone C) |
 | ADC button/cancel threshold | 900 mV | `SM_ADC_BUTTON_MV 900` — at or above this = button pressed or plug removed; cancel charge trigger |
-| Lear OBC target voltage | 392 V | `SM_LEAR_TARGET_VOLTAGE_V 392` — fixed OBC DC voltage setpoint; change in `sm_config.h` |
+| Lear OBC target voltage | 392 V | `SM_LEAR_TARGET_VOLTAGE_V 392` — startup default for `g_sm_target_voltage_v`; overwritten at runtime by CAN 0x6C0 (range `SM_TARGET_VOLTAGE_MIN_V`–`SM_TARGET_VOLTAGE_MAX_V`); re-encoded into 0x050 immediately if changed while CHARGING |
 | J1772 AC current limit | derived | Computed each SM cycle from MCPWM pilot duty cycle — see J1772 Current Derivation section |
 
 ---
@@ -186,7 +186,7 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   - Set `frame_5bf.d[2] = (uint8_t)(g_session_ac_current_A * 5.0f)` — locks 0x5BF J1772 current field to session value (`amps × 5` encoding); unchanged for duration of session
   - Configure `frame_050`:
     - `Lear_ChargeEnable = 1` (byte 7 bit 0 = 1)
-    - `Lear_TargetVoltage = SM_LEAR_TARGET_VOLTAGE_V` (392 V → encoded as `392 × 10 = 3920` big-endian 16-bit in bytes 2–3)
+    - `Lear_TargetVoltage = g_sm_target_voltage_v` (default 392 V → encoded as `392 × 10 = 3920` big-endian 16-bit in bytes 2–3)
     - `Lear_ACCurrentLimit` = `g_session_ac_current_A` (captured in IDLE_PLUG before `GPIO_CP_ENABLE` asserted — fixed for session; see J1772 Current Derivation section; **NOT re-derived in this state**)
   - `vTaskResume(twai1_tx_task_hdl)` — TWAI1 TX begins immediately at 100 ms cadence *(call **after** `frame_050` is fully written)*
   - `GPIO_STATUS_LED = HIGH`
@@ -195,14 +195,14 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   - `0x380` at 100 ms: AC relay bit = 1; power = `SM_MAX_CHARGE_POWER_W / 100`.
   - `0x5BF` at 100 ms: `d[4]` = `0x60` (CHARGING); `d[2]` = `(uint8_t)(g_session_ac_current_A * 5.0f)` (J1772 available current, `amps × 5` — set on CHARGING entry, held constant for session).
 - **TWAI0 RX triggers**:
-  - `0x55B` decoded SOC ≥ `SM_SOC_CUTOFF_PCT` → set `charge_done_normal = true`, then → CHARGE_DISABLE *(normal completion — flag routes to CHARGE_DONE after shutdown sequence)*
+  - `0x55B` decoded SOC ≥ `g_sm_target_soc_pct` → set `charge_done_normal = true`, then → CHARGE_DISABLE *(normal completion — flag routes to CHARGE_DONE after shutdown sequence)*
   - `0x50B d[3][7:6] == 0b00` (SLEEP) → CHARGE_DISABLE
   - `0x1DB d[1][2:0] != 0b000` (LBC failsafe) → CHARGE_DISABLE
   - `0x1D4 d[6] == 0x8C` (STATUS_INTERRUPTED) → CHARGE_DISABLE *(VCM signalled charge interrupted)*
 - **ADC trigger**:
   - `adc_mv >= SM_ADC_BUTTON_MV` (Zone B: button pressed, or Zone C: plug removed) → CHARGE_DISABLE *(immediate preemption)*
 - **TWAI1 obligations**:
-  - `0x050` at 100 ms (via TWAI1 TX task): `Lear_ChargeEnable = 1`; `Lear_TargetVoltage = SM_LEAR_TARGET_VOLTAGE_V`; `Lear_ACCurrentLimit` = `g_session_ac_current_A` (fixed session value — PWM edge detection unreliable after `GPIO_CP_ENABLE` assertion; **do not re-derive here**).
+  - `0x050` at 100 ms (via TWAI1 TX task): `Lear_ChargeEnable = 1`; `Lear_TargetVoltage = g_sm_target_voltage_v`; `Lear_ACCurrentLimit` = `g_session_ac_current_A` (fixed session value — PWM edge detection unreliable after `GPIO_CP_ENABLE` assertion; **do not re-derive here**).
   - Monitor `0x617` (Lear_DCData) for DC voltage and current telemetry (informational; no control action currently defined).
   - Monitor `0x274` (Lear_Temperature) for OBC temperature (informational; fault action TBD).
 - **Timeout**: None — charging runs until an exit trigger fires.

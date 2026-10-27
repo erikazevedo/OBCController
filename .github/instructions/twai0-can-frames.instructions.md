@@ -21,6 +21,7 @@ applyTo: "**/twai*"
 | [8](#8-0x50b--vcm-wake--sleep-command-rx) | 0x50B | RX | VCM Wake / Sleep Command |
 | [9](#9-0x55b--lbc-state-of-charge-rx) | 0x55B | RX | LBC State of Charge |
 | [10](#10-0x5bc--lbc-gids--capacity--soh-rx) | 0x5BC | RX | LBC GIDS / Capacity / SOH |
+| [11](#11-0x6c0--0x6c1--custom-display-settings) | 0x6C0 / 0x6C1 | RX / TX | Custom display settings (not a stock ZE0 frame) |
 
 ---
 
@@ -444,3 +445,19 @@ Verified against every frame in ZE0 AC-charge captures.
 | 17 | Normal 100 V charge to 100% SOC |
 | 18 | Normal 100 V charge to 80% SOC |
 | 31 | Invalid |
+
+---
+
+## 11. 0x6C0 / 0x6C1 — Custom Display Settings
+
+Not part of the stock ZE0 EV-CAN bus (not seen in any captured log or DBC). Both frames share one layout, DLC 8:
+
+| Byte | Content |
+|------|---------|
+| d[0] | Target voltage, raw × 2 V (default 392 V = 196) |
+| d[1] | Target SOC, 1 % per bit |
+| d[2..6] | Reserved, 0 |
+| d[7] | Checksum = `0xA5 ^ d[0] ^ d[1] ^ ... ^ d[6]` |
+
+- **0x6C0 (RX, display → controller):** overwrites `g_sm_target_voltage_v` / `g_sm_target_soc_pct`. Dropped whole (previous values kept) if DLC ≠ 8, checksum wrong, a reserved byte ≠ 0, or a value is outside `SM_TARGET_VOLTAGE_MIN_V`–`MAX_V` / `SM_TARGET_SOC_MIN_PCT`–`MAX_PCT`.
+- **0x6C1 (TX, controller → display):** current values, every 5th gptimer tick (500 ms), only while `g_twai0_tx_enabled`.

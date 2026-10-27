@@ -1,6 +1,7 @@
 #include "rx_dispatcher.h"
 #include "twai_handler.h"
 #include "state_machine.h"
+#include "sm_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -88,6 +89,32 @@ static void handle_55b(const uint8_t *data)
 //     ESP_LOGW(TAG, "VCM beacon 0x%03"PRIX32" — TX halted, SM->SLEEP", id);
 // }
 
+/* ── 0x6C0 — Display Unit Settings ───────────────────────────────────────────────────── */
+/* A frame that fails any check is dropped whole; previous settings stay in effect. */
+static void handle_display_cmd(const can_rx_event_t *event)
+{
+    const uint8_t *d = event->data;
+
+    if (event->dlc != 8u || d[7] != display_frame_csum(d)) {
+        return;
+    }
+    for (int i = 2; i < 7; i++) {
+        if (d[i] != 0u) {
+            return;
+        }
+    }
+
+    uint16_t volts = (uint16_t)((uint16_t)d[0] * 2u);
+    uint8_t  soc   = d[1];
+    if (volts < SM_TARGET_VOLTAGE_MIN_V || volts > SM_TARGET_VOLTAGE_MAX_V ||
+        soc   < SM_TARGET_SOC_MIN_PCT   || soc   > SM_TARGET_SOC_MAX_PCT) {
+        return;
+    }
+
+    g_sm_target_voltage_v = volts;
+    g_sm_target_soc_pct   = soc;
+}
+
 /* ── TWAI1 RX frames — OBC alive signal ──────────────────────────────────── */
 static void handle_twai1_frame(void)
 {
@@ -112,6 +139,7 @@ void dispatch_can_message(const can_rx_event_t *event)
         case 0x55Bu: handle_55b(event->data); break;
         // case 0x603u: /* fall-through */
         // case 0x68Cu: handle_vcm_beacon(event->id, event->data); break;
+        case CAN_ID_DISPLAY_CMD: handle_display_cmd(event); break;
         default: break;
     }
 }

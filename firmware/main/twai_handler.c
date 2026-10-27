@@ -1,4 +1,5 @@
 #include "twai_handler.h"
+#include "state_machine.h"
 #include "gpio_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -33,11 +34,14 @@ DRAM_ATTR uint8_t frame_380_data[8] = { 0x02, 0x04, 0x10, 0x21, 0x00, 0x00, 0x00
 DRAM_ATTR uint8_t frame_5bf_data[8] = { 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00 };
 /* 0x050 Lear_Control — d[1]=0xDC always; other dynamic fields set in SM    */
 DRAM_ATTR uint8_t frame_050_data[8] = { 0x00, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+/* 0x6C1 display advert — d[0]/d[1]/d[7] refreshed by the gptimer ISR; d[2..6] stay 0 */
+static DRAM_ATTR uint8_t frame_6c1_data[8] = { 0 };
 
 /* twai_frame_t structs — buffer pointers set in init functions below */
 static DRAM_ATTR twai_frame_t frame_380;
 static DRAM_ATTR twai_frame_t frame_5bf;
 static DRAM_ATTR twai_frame_t frame_050;
+static DRAM_ATTR twai_frame_t frame_6c1;
 
 /* ── ISR-safe log tag ────────────────────────────────────────────────────── */
 static DRAM_ATTR const char TWAI_ISR_TAG[] = "twai";
@@ -58,7 +62,7 @@ static inline bool IRAM_ATTR twai0_id_accepted(uint32_t id)
 {
     return (id == 0x1D4u || id == 0x1DBu || id == 0x1DCu || id == 0x1F2u ||
             id == 0x50Bu || id == 0x55Bu || id == 0x5BCu ||
-            id == 0x603u || id == 0x68Cu);
+            id == CAN_ID_DISPLAY_CMD);
 }
 
 static inline bool IRAM_ATTR twai1_id_accepted(uint32_t id)
@@ -195,6 +199,16 @@ static bool IRAM_ATTR gptimer_alarm_cb(gptimer_handle_t timer,
 
     twai_node_transmit(twai0_hdl, &frame_380, 0);
     twai_node_transmit(twai0_hdl, &frame_5bf, 0);
+
+    /* ── 0x6C1 display advert — every 5th tick (500 ms) ── */
+    static DRAM_ATTR uint8_t advert_ticks = 0;
+    if (++advert_ticks >= 5u) {
+        advert_ticks = 0;
+        frame_6c1_data[0] = (uint8_t)(g_sm_target_voltage_v >> 1);
+        frame_6c1_data[1] = g_sm_target_soc_pct;
+        frame_6c1_data[7] = display_frame_csum(frame_6c1_data);
+        twai_node_transmit(twai0_hdl, &frame_6c1, 0);
+    }
     return false;
 }
 
@@ -221,8 +235,9 @@ void twai_handler_init(void)
     };
     ESP_ERROR_CHECK(twai_new_node_onchip(&twai0_cfg, &twai0_hdl));
 
+    /* Second filter passes 0x400-0x7FF so 0x6C0 arrives; twai0_id_accepted() trims the rest */
     twai_mask_filter_config_t twai0_filter =
-        twai_make_dual_filter(0x1D0, 0x7D0, 0x500, 0x700, false);
+        twai_make_dual_filter(0x1D0, 0x7D0, 0x400, 0x400, false);
     ESP_ERROR_CHECK(twai_node_config_mask_filter(twai0_hdl, 0, &twai0_filter));
 
     twai_event_callbacks_t twai0_cbs = {
@@ -279,6 +294,11 @@ void gptimer_init_twai0_tx(void)
     frame_5bf = (twai_frame_t){
         .header     = { .id = 0x5BFu, .dlc = 8 },
         .buffer     = frame_5bf_data,
+        .buffer_len = 8,
+    };
+    frame_6c1 = (twai_frame_t){
+        .header     = { .id = CAN_ID_DISPLAY_ECHO, .dlc = 8 },
+        .buffer     = frame_6c1_data,
         .buffer_len = 8,
     };
 

@@ -80,11 +80,11 @@ TWAI0 uses **dual mask filter mode** to maximise hardware pre-filtering.
 ```c
 // Filter 1: covers 0x1D0–0x1DF  AND  0x1F0–0x1FF
 //   Target IDs in this range: 0x1D4, 0x1DB, 0x1DC, 0x1F2
-// Filter 2: covers 0x500–0x5FF
-//   Target IDs in this range: 0x50B, 0x55B, 0x5BC
+// Filter 2: covers 0x400–0x7FF (bit 10 must be set)
+//   Target IDs in this range: 0x50B, 0x55B, 0x5BC, 0x6C0 (display settings)
 twai_mask_filter_config_t twai0_filter =
     twai_make_dual_filter(0x1D0, 0x7D0,   /* id1, mask1 */
-                          0x500, 0x700,   /* id2, mask2 */
+                          0x400, 0x400,   /* id2, mask2 */
                           false);         /* 11-bit standard IDs */
 // Apply after node creation, before enable:
 ESP_ERROR_CHECK(twai_node_config_mask_filter(twai0_hdl, 0, &twai0_filter));
@@ -94,7 +94,7 @@ ESP_ERROR_CHECK(twai_node_config_mask_filter(twai0_hdl, 0, &twai0_filter));
 
 **REQUIRED: software rejection** — The hardware filter passes false positives.
 Inside `on_rx_done`, after calling `twai_node_receive_from_isr()`, reject any frame
-whose ID is not exactly one of: `{0x1D4, 0x1DB, 0x1DC, 0x1F2, 0x50B, 0x55B, 0x5BC}`.
+whose ID is not exactly one of: `{0x1D4, 0x1DB, 0x1DC, 0x1F2, 0x50B, 0x55B, 0x5BC, 0x6C0}`.
 
 ### TX Frames
 
