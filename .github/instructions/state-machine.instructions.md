@@ -11,11 +11,16 @@ All tunable parameters MUST be defined as macros in a dedicated config header (e
 |---|---|---|
 | SOC charge cutoff | 80.0 % | `SM_SOC_CUTOFF_PCT 80.0f` — startup default for `g_sm_target_soc_pct`; overwritten at runtime by CAN 0x6C0 (range `SM_TARGET_SOC_MIN_PCT`–`SM_TARGET_SOC_MAX_PCT`) |
 | Max OBC charge power | 3300 W | `SM_MAX_CHARGE_POWER_W 3300` |
-| VCM auth bypass | enabled | `SM_SKIP_VCM_AUTH 1` — set to `0` to re-enable VCM_AUTH state (IDLE_PLUG → VCM_AUTH → EVSE_ENABLE) |
+| VCM authorisation mode | bypass only | `SM_SKIP_VCM_AUTH 1` (`#ifndef`-guarded). `1` = bypass only: the car must be ON and the VCM is never asked. `0` = hybrid: power switch OFF → VCM-authorised path ([below](#vcm-authorised-path-sm_skip_vcm_auth--0)); power switch ON → the bypass path, unchanged |
+| Plug-in indicator | enabled | `SM_PLUG_SIG_ENABLE 1` — drive `GPIO_PLUG_SIG` (OBC pin 21 → combination meter plug icon) while a plug is present (zone A or B), in both builds |
 | ADC no-plug threshold | 2300 mV | `SM_ADC_NO_PLUG_MV 2300` — above this = no plug (Zone C) |
-| ADC button/cancel threshold | 900 mV | `SM_ADC_BUTTON_MV 900` — at or above this = button pressed or plug removed; cancel charge trigger |
+| ADC button/cancel threshold | 700 mV | `SM_ADC_BUTTON_MV 700` — at or above this = button pressed or plug removed; cancel charge trigger |
 | Lear OBC target voltage | 392 V | `SM_LEAR_TARGET_VOLTAGE_V 392` — startup default for `g_sm_target_voltage_v`; overwritten at runtime by CAN 0x6C0 (range `SM_TARGET_VOLTAGE_MIN_V`–`SM_TARGET_VOLTAGE_MAX_V`); re-encoded into 0x050 immediately if changed while CHARGING |
 | J1772 AC current limit | derived | Computed each SM cycle from MCPWM pilot duty cycle — see J1772 Current Derivation section |
+| VCM-authorised path timing | see `sm_config.h` | `SM_EVA_PULSE_MS`, `SM_VCM_WAKE_TIMEOUT_MS`, `SM_VCM_WAKE_ATTEMPTS`, `SM_REWAKE_DELAY_MS`, `SM_PILOT_STABLE_MS`, `SM_VCM_SILENT_MS`, `SM_BEACON_WINDOW_MS`, `SM_POWER_ON_WAIT_MS`, `SM_ANNOUNCE_*_MS`, `SM_CHARGE_REQ_TIMEOUT_MS`, `SM_HV_LIVE_TIMEOUT_MS`, `SM_LEAR_AC_TIMEOUT_MS`, `SM_LEAR_ALIVE_MS`, `SM_HV_SETTLE_MS`, `SM_CONTACTOR_STEP_MS`, `SM_AUTH_STEP_MS`, `SM_POWER_CMD_TIMEOUT_MS`, `SM_RAMP_DOWN_MS`, `SM_MAIN_RELAY_WAIT_MS`, `SM_STOP_ACK_TIMEOUT_MS`, `SM_SLEEP_TAIL_MS`, `SM_TX_VCM_FRESH_MS` |
+| Follow the VCM power command | enabled | `SM_FOLLOW_VCM_POWER_CMD 1` — Lear AC limit follows `0x1F2` d[1]; `0` = pilot and `SM_MAX_CHARGE_POWER_W` only |
+| EVSE AC voltage | 120 V | `SM_EVSE_AC_NOMINAL_V 120` — reported in `0x380` and used to convert watts to Lear AC amps; `SM_AC_TYPE_MASK` follows it (0x08 = 100 V class, 0x10 = 200 V class) |
+| Signal trace | enabled | `SM_LOG_VCM_TRACE 1` — rate-limited INFO log of `0x50B`, `0x1F2` (with the VCM MODE name), `0x1D4`, `0x1DA` and Lear changes |
 
 ---
 
@@ -28,8 +33,8 @@ The ADC input reads a resistor-divider that encodes three operating zones:
 
 | Zone | Voltage range | Meaning |
 |---|---|---|
-| A | < 900 mV (`SM_ADC_BUTTON_MV`) | Plug connected, no user action |
-| B | 900 – 2300 mV | Plug connected, unlock button pressed — **cancel charge** |
+| A | < 700 mV (`SM_ADC_BUTTON_MV`) | Plug connected, no user action |
+| B | 700 – 2300 mV | Plug connected, unlock button pressed — **cancel charge** |
 | C | > 2300 mV (`SM_ADC_NO_PLUG_MV`) | No plug |
 
 **Cancel charge condition (Zone B or C):** `adc_mv >= SM_ADC_BUTTON_MV`  
@@ -42,11 +47,15 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
 
 ## States
 
+The bypass states (SLEEP … CHARGE_DONE) are used by both builds. The VCM-authorised path (`SM_SKIP_VCM_AUTH == 0`, power switch OFF) has its own states, specified in [VCM-authorised path](#vcm-authorised-path-sm_skip_vcm_auth--0).
+
+> **0x50B in this firmware:** the run/sleep events follow **d[2]**, which is non-zero only while the **power switch is ON** (`0x02` → `0x06`). A charge wake keeps d[2] = `0x00` for the whole session; there only d[3][7:6] (`11` WakeUp / `00` GoToSleep) shows the VCM is awake. The bypass states therefore mean "car ON".
+
 ### SLEEP
 
-- **Description**: VCM commanded sleep (0x50B SLEEP); controller is fully quiescent — no CAN transmitted on either bus.
+- **Description**: Power switch OFF (`0x50B d[2] == 0x00`) or EV-CAN silent. Bypass build: fully quiescent. Auth build: also the starting point of the VCM-authorised path.
 - **Entry actions**:
-  - `g_twai0_tx_enabled = false` *(already cleared by RX dispatcher on 0x50B SLEEP per existing `twai-config` architecture — state machine need not write this directly)*
+  - `g_twai0_tx_enabled = false` *(bypass build: written by the RX dispatcher from 0x50B d[2]; auth build: by the state machine at the end of each cycle)*
   - Confirm `vTaskSuspend(twai1_tx_task_hdl)` (TWAI1 TX task must not run)
   - `GPIO_CP_ENABLE = LOW`
   - `GPIO_CONT_POS = LOW`
@@ -55,8 +64,8 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
 - **Exit actions**: none.
 - **TWAI0 TX obligations**: **None.** `g_twai0_tx_enabled = false`; gptimer ISR gate suppresses all TX.
 - **TWAI0 RX triggers**:
-  - `0x50B d[3][7:6] == 0b11` (RUN) → IDLE_NO_PLUG
-    *(Note: the existing 5-second `esp_timer` delay before `g_twai0_tx_enabled` is set true is part of the TWAI0 TX gate architecture, not a state machine delay. The state machine transitions to IDLE_NO_PLUG immediately; TWAI0 TX simply remains gated until the timer fires.)*
+  - `0x50B d[2] != 0x00` (power switch ON) → IDLE_NO_PLUG
+  - Auth build only: see the SLEEP row of the [VCM-authorised path](#vcm-authorised-path-sm_skip_vcm_auth--0).
 - **TWAI1 actions**: None.
 - **Timeout**: None.
 
@@ -78,7 +87,7 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - `0x380` at 100 ms: power field = `SM_MAX_CHARGE_POWER_W / 100`; AC relay bit = 0.
   - `0x5BF` at 100 ms: status byte = `0x28` (IDLE).
 - **TWAI0 RX triggers**:
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP
+  - `0x50B d[2] == 0x00` (power switch OFF) → SLEEP
 - **ADC trigger**:
   - `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone A or B — plug present) → IDLE_PLUG
 - **TWAI1 actions**: None.
@@ -88,10 +97,10 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
 
 ### IDLE_PLUG
 
-- **Description**: Plug physically inserted (ADC threshold crossed); controller broadcasts plug-present status on TWAI0 to trigger VCM wake sequence and pilot negotiation. Holds until VCM responds or plug is removed.
+- **Description**: Bypass path (car ON). Plug physically inserted (ADC threshold crossed); the controller repeats the OBC start-up states on `0x5BF` and starts charging after 100 ms without asking the VCM.
 - **Entry actions**:
-  - Set `frame_5bf.d[4] = 0x10` (TIMER_WAIT2) — triggers VCM wake sequence
-  - After exactly **100 ms** (1 CAN frame period), set `frame_5bf.d[4] = 0x18` (PLUG_BEEP). Log analysis of `leaf_ac_charge.txt` confirms this is a fixed single-cycle advance: `0x10` appears for exactly one 100 ms frame in both observed plug-insertion events.
+  - Set `frame_5bf.d[4] = 0x10` (first OBC start-up state)
+  - After exactly **100 ms** (1 CAN frame period), set `frame_5bf.d[4] = 0x18` (second start-up state). The stock OBC sends `0x10` for one frame and then `0x18` at **every** start, with or without a plug — it is not a plug or beep signal.
   - `GPIO_STATUS_LED = HIGH`
   - Reset `g_session_ac_current_A = 0.0f` (clears previous session value)
 - **Per-cycle actions (each 10 ms SM cycle while in IDLE_PLUG)**:
@@ -103,41 +112,18 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - `GPIO_STATUS_LED = LOW` (restored to LOW before entering downstream states that set it themselves)
 - **TWAI0 TX obligations**:
   - `0x380` at 100 ms: AC relay bit = 0.
-  - `0x5BF` at 100 ms: status byte sequence `0x10` (1 frame = 100 ms) → `0x18` (PLUG_BEEP, held until state exit).
+  - `0x5BF` at 100 ms: status byte sequence `0x10` (1 frame = 100 ms) → `0x18` (held until state exit).
 - **TWAI0 RX triggers**:
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(plug remains but VCM slept)*
-  - `0x1F2 d[2] == 0x20` (CHARGING_SLOW — VCM charge command) AND `SM_SKIP_VCM_AUTH == 0` → lock `g_session_ac_current_A = i_max_A`, then → VCM_AUTH
-  - `0x1F2 d[2] == 0x20` AND `SM_SKIP_VCM_AUTH != 0` → lock `g_session_ac_current_A = i_max_A`, then → EVSE_ENABLE
-  > **Critical:** `d[2] == 0x60` MUST NOT trigger this transition. ZE0 log analysis confirms `0x60` appears during the ~20 s CP pilot handshake window (before VCM authorization) and again at session end. Only `0x20` reliably means the VCM has issued the charge command.
+  - `0x50B d[2] == 0x00` (power switch OFF) → SLEEP *(plug remains but the car was switched off)*
+- **Advance trigger**:
+  - `0x5BF` advanced to `0x18` (100 ms) AND Zone A → lock `g_session_ac_current_A = i_max_A`, then → EVSE_ENABLE. Zone B (button held) keeps the state and restarts the 100 ms advance.
   > **J1772 current lock:** `g_session_ac_current_A` is frozen here — the last `i_max_A` derived in IDLE_PLUG — while `GPIO_CP_ENABLE` is still LOW and the pilot signal is still valid. This is the **only** point per session where `g_session_ac_current_A` is written.
 - **ADC trigger**:
   - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
 - **TWAI1 actions**: None.
-- **Timeout**: None defined — state holds indefinitely awaiting VCM response.
+- **Timeout**: None.
 
-> **Note on `SM_SKIP_VCM_AUTH`**: When set to `1`, the VCM_AUTH state is bypassed entirely. IDLE_PLUG transitions directly to EVSE_ENABLE on the same VCM response trigger. This flag exists because VCM authorisation proved unreliable in prior bench testing.
-
----
-
-### VCM_AUTH
-
-> **This state is skipped entirely when `SM_SKIP_VCM_AUTH != 0`.**
-
-- **Description**: Controller waiting for VCM to grant L2 AC charge authorisation via `0x1F2 d[2] == 0x20` (CHARGING_SLOW).
-- **Entry actions**:
-  - Set `frame_5bf.d[4] = 0x30` (TIMER_WAIT)
-- **Exit actions**: none.
-- **TWAI0 TX obligations**:
-  - `0x380` at 100 ms: AC relay bit = 0.
-  - `0x5BF` at 100 ms: status byte = `0x30` (TIMER_WAIT).
-- **TWAI0 RX triggers**:
-  - `0x1F2 d[2] == 0x20` (CHARGING_SLOW) → EVSE_ENABLE
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(high priority — immediate)*
-- **ADC trigger**:
-  - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
-  - `adc_mv >= SM_ADC_BUTTON_MV` AND `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone B — button pressed, plug still present) → IDLE_PLUG
-- **TWAI1 actions**: None.
-- **Timeout**: **OPEN** — see Open Questions #4.
+> **The VCM never authorises charging with the power switch ON** (FSM EVC-35/40), so this path ignores `0x1F2`. It also defeats the VCM's READY interlock: the VCM is never told that a connector is attached, so the car can be driven off while plugged in.
 
 ---
 
@@ -157,7 +143,7 @@ From any charging-active state (EVSE_ENABLE, CHARGING), this preempts all other 
   - `0x380` at 100 ms: AC relay bit = 1; power = `SM_MAX_CHARGE_POWER_W / 100`.
   - `0x5BF` at 100 ms: status = `0x40` (CHARGE_INIT).
 - **TWAI0 RX triggers** (preemptive — abort before CHARGING):
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → CHARGE_DISABLE
+  - `0x50B d[2] == 0x00` (power switch OFF) → charge-disable sequence, then SLEEP
   - `0x1DB d[1][2:0] != 0b000` (LBC failsafe active) → CHARGE_DISABLE
 - **ADC trigger**:
   - `adc_mv >= SM_ADC_BUTTON_MV` (Zone B: button pressed, or Zone C: plug removed) → CHARGE_DISABLE
@@ -196,9 +182,9 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   - `0x5BF` at 100 ms: `d[4]` = `0x60` (CHARGING); `d[2]` = `(uint8_t)(g_session_ac_current_A * 5.0f)` (J1772 available current, `amps × 5` — set on CHARGING entry, held constant for session).
 - **TWAI0 RX triggers**:
   - `0x55B` decoded SOC ≥ `g_sm_target_soc_pct` → set `charge_done_normal = true`, then → CHARGE_DISABLE *(normal completion — flag routes to CHARGE_DONE after shutdown sequence)*
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → CHARGE_DISABLE
+  - `0x50B d[2] == 0x00` (power switch OFF) → charge-disable sequence, then SLEEP
   - `0x1DB d[1][2:0] != 0b000` (LBC failsafe) → CHARGE_DISABLE
-  - `0x1D4 d[6] == 0x8C` (STATUS_INTERRUPTED) → CHARGE_DISABLE *(VCM signalled charge interrupted)*
+  - `0x1D4 d[6] == 0x8C` (DBC "charging interrupted") → CHARGE_DISABLE *(never observed in 16 ZE0 captures; harmless)*
 - **ADC trigger**:
   - `adc_mv >= SM_ADC_BUTTON_MV` (Zone B: button pressed, or Zone C: plug removed) → CHARGE_DISABLE *(immediate preemption)*
 - **TWAI1 obligations**:
@@ -216,7 +202,7 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
 **This is a transitional state, not a steady state.** The state machine task executes steps 1–3 immediately, then performs the contactor open sequence (step 4) with a 500 ms inter-step blocking delay via `vTaskDelay()`. Total minimum duration: ~500 ms. TWAI0 TX continues from the gptimer ISR throughout.
 
 - **Entry actions (sequential)**:
-  1. Set `frame_050.d[7] = 0x00` (`Lear_ChargeEnable = 0`) — write to the shared frame struct before the TWAI1 task next fires.
+  1. `twai1_frame_050_set_enable(false)` (`Lear_ChargeEnable = 0`) — clears the shared frame and any 0x050 still queued in the driver, before the TWAI1 task next fires.
   2. `vTaskSuspend(twai1_tx_task_hdl)` — stops periodic 0x050. *(The frame with `ChargeEnable = 0` may or may not have been sent; that is acceptable since withholding also stops OBC after ~1 s. Sending one explicit disable is best-effort.)*
   3. `GPIO_CP_ENABLE = LOW` — de-asserts EVSE relay command; AC power removed from OBC input.
   4. Open HV charge contactors (see Contactor Open Sequence below).
@@ -224,7 +210,7 @@ Executed by the state machine task using `vTaskDelay()`. Blocking for 500 ms is 
   6. Set `frame_5bf.d[4] = 0x28` (IDLE).
   7. `GPIO_STATUS_LED = LOW`.
 - **Exit transition** (after sequence completes — evaluated in priority order):
-  1. `vcm_sleep` (`0x50B d[3][7:6] == 0b00`) → SLEEP *(charging no longer active; VCM sleep intent propagates through shutdown. `0x50B` is periodic at 100 ms so the flag re-arms during the 500 ms contactor delay and is reliably set at exit.)*
+  1. `vcm_sleep` (`0x50B d[2] == 0x00`, power switch OFF) → SLEEP *(`0x50B` is periodic at 100 ms so the flag re-arms during the 500 ms contactor delay and is reliably set at exit.)*
   2. `adc_mv <= SM_ADC_NO_PLUG_MV` → IDLE_PLUG *(plug body still present after charge end)*
   3. `adc_mv > SM_ADC_NO_PLUG_MV` → IDLE_NO_PLUG *(plug removed)*
 - **TWAI0 TX obligations**: `0x380` and `0x5BF` continue uninterrupted (gptimer ISR still running). Content is updated in steps 5–6 above.
@@ -255,10 +241,12 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
   - `0x380` at 100 ms: AC relay bit = 0; power = `SM_MAX_CHARGE_POWER_W / 100`.
   - `0x5BF` at 100 ms: status byte = `0x28` (IDLE); J1772 current field = `0x00`.
 - **TWAI0 RX triggers**:
-  - `0x50B d[3][7:6] == 0b00` (SLEEP) → SLEEP *(high priority)*
+  - `0x50B d[2] == 0x00` (power switch OFF) → SLEEP *(high priority)*
 - **ADC trigger**:
   - `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) → IDLE_NO_PLUG
-- **EV status trigger**:
+- **SOC trigger**:
+  - SOC ≤ `g_sm_target_soc_pct − SM_SOC_RESTART_HYST` → IDLE_PLUG (charge again)
+- **EV status trigger** *(commented out in `state_machine.c`)*:
   - `g_sm_ev_on == false` (0x50B `d[2] == 0x00` — EV system powers down) → IDLE_NO_PLUG
 - **TWAI1 actions**: None. TX task remains suspended.
 - **Timeout**: None — holds indefinitely until plug removal, VCM sleep, or EV status off.
@@ -267,21 +255,68 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 
 ---
 
+## VCM-authorised path (`SM_SKIP_VCM_AUTH == 0`)
+
+> **Source:** `LeafOBCBridge/docs/OBC-VCM-State-Sequence.md` (a real ZE0 AC-charge capture, verified frame by frame). The VCM authorises normal charging only with the **power switch OFF** (FSM EVC-35/40/41), after the OBC wakes it with the **EV system activation pulse** (OBC pin 18 → VCM pin 96, ≈ 1 s, EVC-78). The bridge then has to behave like the stock OBC on `0x380` / `0x5BF`.
+
+**Path selection.** Power switch ON (`0x50B d[2] != 0x00`) → the bypass states above, unchanged. Power switch OFF → the states below. Every auth state before AUTH_START hands over to IDLE_PLUG (bypass) if the power switch turns ON.
+
+**Decoded inputs.** `rx_dispatcher` writes `g_sm_rx` (`state_machine.h`) and frame counters. The SM ages every source with its own clock: a value counts only while its frame arrived within the stated window, otherwise it reads as "none" / false.
+
+| Input | Source | Fresh window |
+|---|---|---|
+| VCM awake / GoToSleep | `0x50B` d[3][7:6] = `11` / `00` | `SM_VCM_SILENT_MS` |
+| Power switch ON | `0x50B` d[2] != `0x00` | `SM_VCM_SILENT_MS` |
+| VCM wake edge | WakeUp after GoToSleep or after `SM_VCM_SILENT_MS` silence (`wake_count`) | — |
+| Power-button wake marker | `0x603` / `0x68C` (1-byte frames ≈ 40 ms before a power-button wake; never before a charge wake) | `SM_BEACON_WINDOW_MS` |
+| Charge request | `0x1F2` d[2] & `0x60`: `0x20` normal charge, `0x60` stop request. **Always mask** — this car also sets d[2] bits 3 and 7 | 500 ms |
+| Maximum charge power | `0x1F2` d[1]: (raw − 100) × 100 W | 500 ms |
+| VCM MODE | `0x1F2` d[5] (CONSULT "VCM MODE": 0–7 start-up, 10 no charge, 30 READY, 109–129 entering charge, 130 charging) — trace only | — |
+| HV live / main relay+ / charge session | `0x1D4` d[4] bit 2 / d[5] bit 6 / d[6] bit 7 | 500 ms |
+| HV bus voltage | `0x1DA` d[0..1], 10 bit × 0.5 V (`d[0] = 0xFF` placeholder ignored) | 500 ms |
+| AC present (Lear alive) | any TWAI1 frame — the Lear broadcasts only with AC input | `SM_LEAR_ALIVE_MS` |
+| Lear DC voltage / current | `0x617` | `SM_LEAR_ALIVE_MS` |
+| SOC | `0x55B` (placeholder `0x3FF` ignored) | last value |
+
+**States.**
+
+| State | Actions | Exits |
+|---|---|---|
+| SLEEP | — | VCM wake edge with a plug and no marker (charge timer start, immediate-charge switch) → VCM_AUTH. With a marker: wait for power ON (→ IDLE_NO_PLUG); none within `SM_POWER_ON_WAIT_MS` → VCM_AUTH. EV-CAN silent ≥ `SM_REWAKE_DELAY_MS` (re-armed by a failed attempt) + plug zone A + pilot > 0 A for `SM_PILOT_STABLE_MS` + wake attempts < `SM_VCM_WAKE_ATTEMPTS` + session not done + SOC allows → VCM_WAKE |
+| VCM_WAKE | `GPIO_EVA_REQ` HIGH for `SM_EVA_PULSE_MS` (non-blocking; `sm_eva_tick()` ends it in any state) | WakeUp → VCM_AUTH. WakeUp with a marker → SLEEP (power-button wake). Power ON → IDLE_PLUG. Plug not in zone A → SLEEP. No WakeUp within `SM_VCM_WAKE_TIMEOUT_MS` → SLEEP (attempt spent) |
+| VCM_AUTH | Appear: `0x380` `00 04 10 <chg> 00 00 00` (first frame after a wake), d[0] = `0x02` from 100 ms; `0x5BF` `0x10` → `0x18` after 100 ms. Announce while plug zone A, pilot > 0 A and SOC allows: +`SM_ANNOUNCE_READY_MS` `0x380` d[2] bit 3 (EVSE ready); +`SM_ANNOUNCE_S2_MS` pilot latched, `GPIO_CP_ENABLE` HIGH, `0x380` d[4] bit 4 (S2), chargeable power = min(pilot × V, max); +`SM_ANNOUNCE_PILOT_MS` `0x5BF` d[2] = pilot × 5. When the Lear broadcasts: AC voltage (`0x380` d[5..6]), `0x5BF` d[1] = `0x65`, AC-type bit 200 ms later. SOC at target after State C → withdraw | Request `0x20` + announced + zone A + SOC allows → AUTH_START. Request `0x60` → VCM_STANDBY (acknowledge). Power ON → IDLE_PLUG. GoToSleep → VCM_SHUTDOWN. EV-CAN silent → SLEEP. Plug removed or no request within `SM_CHARGE_REQ_TIMEOUT_MS` → VCM_STANDBY |
+| VCM_STANDBY | State C released, announcement withdrawn. On a stop request: `0x380` d[0] bit 0 + d[2] = `0x20`, `0x5BF` `0x30` (acknowledged after `SM_STOP_ACK_TIMEOUT_MS` without a request) | Stop request withdrawn after being seen, plug zone A → VCM_AUTH (VCM restart: immediate-charge switch or timer). GoToSleep → VCM_SHUTDOWN. Power ON → IDLE_PLUG. EV-CAN silent → SLEEP |
+| AUTH_START | `0x5BF` `0x40`, chargeable power 0. Then: HV live + relay+ + Lear alive → `SM_HV_SETTLE_MS` → `GPIO_CONT_NEG` → `SM_CONTACTOR_STEP_MS` → `GPIO_CONT_POS`, `0x380` d[4] bit 6, `0x5BF` `0x48` → +`SM_AUTH_STEP_MS` `0x50` + `0x380` d[7] bit 7 → `0x58` → chargeable power re-advertised | VCM power command > 0 (or `SM_FOLLOW_VCM_POWER_CMD == 0`, or `SM_POWER_CMD_TIMEOUT_MS` with a warning) → AUTH_CHARGING. Stop request, button or unplug, LBC failsafe, GoToSleep, HV not live within `SM_HV_LIVE_TIMEOUT_MS`, no AC within `SM_LEAR_AC_TIMEOUT_MS`, HV lost after a contactor closed → AUTH_STOP |
+| AUTH_CHARGING | `0x050` ChargeEnable = 1, AC limit = min(pilot, `SM_MAX_CHARGE_POWER_W` / V, VCM command / V), updated as the command ramps; TWAI1 TX resumed; `0x5BF` `0x60`; telemetry: `0x380` output power (Lear V × A), `0x5BF` d[3] = DC V − 263, d[6] bits 7:3 = DC A | Stop request, power command back to 0, `0x1D4` charge session ended → AUTH_STOP (VCM, session done). Button or unplug → AUTH_STOP (release, session done). SOC ≥ target → AUTH_STOP (SOC, session done). `0x1F2` lost, LBC failsafe, HV lost, Lear silent, GoToSleep → AUTH_STOP (fault) |
+| AUTH_STOP | Lear disabled; chargeable and output power 0; EVSE ready cleared; `0x5BF` `0x70` (VCM stop) or `0x80` (OBC stop); release-switch bit follows the button, or a 50 ms pulse for a SOC stop. Sequence: Lear DC < 1 A (or `SM_RAMP_DOWN_MS`) → TWAI1 suspended, State C released → VCM opens its main relays (HV live or relay+ cleared, or `SM_MAIN_RELAY_WAIT_MS`) → `GPIO_CONT_POS` → `SM_CONTACTOR_STEP_MS` → `GPIO_CONT_NEG`, `0x5BF` `0x78`. Only NEG closed → it opens at once | Stop request → VCM_STANDBY (acknowledge). GoToSleep → VCM_SHUTDOWN. Power ON → IDLE_PLUG. EV-CAN silent → SLEEP. No request within `SM_STOP_ACK_TIMEOUT_MS` → VCM_STANDBY (acknowledged anyway) |
+| VCM_SHUTDOWN | Announcement withdrawn, stop-ack bit cleared, `0x5BF` `0x38` | `SM_SLEEP_TAIL_MS` (150 ms) after the **first** GoToSleep, or EV-CAN silent → SLEEP (TX off; the stock OBC sends one `0x38` frame, 120 ms after GoToSleep). WakeUp again → VCM_STANDBY |
+
+**Plug-session latches**, all cleared when the plug is removed (zone C):
+- *Wake attempts* — bridge-initiated wakes since the last charge (`SM_VCM_WAKE_ATTEMPTS`).
+- *Fault stops* — reaching `SM_VCM_WAKE_ATTEMPTS` sets *session done*.
+- *Session done* — set by VCM, SOC and button stops: no more bridge-initiated wakes. **VCM self-wakes are always answered.**
+- *SOC stopped* — after a SOC-target stop a new announcement needs SOC < target − `SM_SOC_RESTART_HYST`.
+
+**TWAI0 TX gate.** In the auth build the state machine owns `g_twai0_tx_enabled`. The auth states transmit only while a VCM frame (`0x50B`, `0x1F2` or `0x1D4`) arrived within `SM_TX_VCM_FRESH_MS` **and** GoToSleep has not lasted `SM_SLEEP_TAIL_MS`. TWAI0 retries an unacknowledged frame forever (a finite `fail_retry_cnt` means single-shot on the ESP32-C6 and would drop frames that lose arbitration), so a frame sent after the last node went to sleep would occupy the sleeping EV-CAN indefinitely; after GoToSleep the VCM keeps transmitting for ≈ 0.9 s, so the 150 ms tail is always acknowledged. Every other state follows `0x50B` d[2], exactly as the bypass build's 0x50B handler does.
+
+**Lear hold-off.** On the first Lear broadcast after State C (AC present) the TWAI1 task is resumed with `0x050` ChargeEnable = 0 and AC limit 0, so the Lear is explicitly disabled — not relying on its ≈ 1 s command timeout — for at least `SM_HV_SETTLE_MS` before a contactor closes. AUTH_CHARGING then sets ChargeEnable = 1 and the limit; every withdrawal of State C suspends the task. Disabling always goes through `twai1_frame_050_set_enable(false)`, which also patches 0x050 frames already queued in the driver.
+
+**Contactor rule.** On this path the charge contactors close only after `0x1D4` reports HV live and main relay+ (the VCM has precharged and closed its main relays) while the Lear is held off, and open only after the Lear output is below 1 A.
+
+---
+
 ## Transitions
 
 | From | To | Guard | Trigger | Priority |
 |---|---|---|---|---|
-| SLEEP | IDLE_NO_PLUG | — | `0x50B d[3][7:6] == 0b11` (RUN) | Normal |
-| IDLE_NO_PLUG | SLEEP | — | `0x50B d[3][7:6] == 0b00` (SLEEP) | Normal |
+| SLEEP | IDLE_NO_PLUG | — | `0x50B d[2] != 0x00` (power switch ON) | Normal |
+| SLEEP | VCM_WAKE / VCM_AUTH | `SM_SKIP_VCM_AUTH == 0` | See [VCM-authorised path](#vcm-authorised-path-sm_skip_vcm_auth--0) | Normal |
+| IDLE_NO_PLUG | SLEEP | — | `0x50B d[2] == 0x00` (power switch OFF) | Normal |
 | IDLE_NO_PLUG | IDLE_PLUG | — | `adc_mv <= SM_ADC_NO_PLUG_MV` (Zone A or B — plug present) | Normal |
 | IDLE_PLUG | IDLE_NO_PLUG | — | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C — plug removed) | Normal |
-| IDLE_PLUG | SLEEP | — | `0x50B d[3][7:6] == 0b00` | Normal |
-| IDLE_PLUG | VCM_AUTH | `SM_SKIP_VCM_AUTH == 0` | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
-| IDLE_PLUG | EVSE_ENABLE | `SM_SKIP_VCM_AUTH != 0` | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
-| VCM_AUTH | EVSE_ENABLE | — | `0x1F2 d[2] == 0x20` (CHARGING_SLOW) | Normal |
-| VCM_AUTH | SLEEP | — | `0x50B d[3][7:6] == 0b00` | High |
-| VCM_AUTH | IDLE_NO_PLUG | — | `adc_mv > SM_ADC_NO_PLUG_MV` (Zone C) | High |
-| VCM_AUTH | IDLE_PLUG | — | `adc_mv >= SM_ADC_BUTTON_MV` AND Zone B (plug still present) | High |
+| IDLE_PLUG | SLEEP | — | `0x50B d[2] == 0x00` | Normal |
+| IDLE_PLUG | EVSE_ENABLE | — | `0x5BF` advanced to `0x18` (100 ms) AND Zone A | Normal |
+| Auth states | Auth states / SLEEP / IDLE_PLUG | `SM_SKIP_VCM_AUTH == 0` | See [VCM-authorised path](#vcm-authorised-path-sm_skip_vcm_auth--0) | — |
 | EVSE_ENABLE | CHARGING | — | Any TWAI1 frame received (0x616 / 0x617 / 0x618 / 0x274) | Normal |
 | EVSE_ENABLE | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, `0x50B` SLEEP, or `0x1DB` failsafe | High |
 | CHARGING | CHARGE_DISABLE | — | `adc_mv >= SM_ADC_BUTTON_MV`, SOC ≥ cutoff, `0x50B` SLEEP, `0x1DB` failsafe, `0x1D4` interrupted | High/Normal |
@@ -297,7 +332,7 @@ Executed by the state machine task using `vTaskDelay()`. Reverse of the close se
 
 ## J1772 AC Current Derivation
 
-> **Hardware constraint:** Once `GPIO_CP_ENABLE` is asserted (EVSE_ENABLE entry), the CP circuit shifts to a lower signal voltage and MCPWM edge detection becomes unreliable. The J1772 current derivation is performed **only in IDLE_PLUG** (while `CP_ENABLE` is still LOW), sampled each 10 ms SM cycle. The result is frozen into `g_session_ac_current_A` at the moment `0x1F2 d[2] == 0x20` fires and is not re-derived in any subsequent state.
+> **Hardware constraint:** Once `GPIO_CP_ENABLE` is asserted (EVSE_ENABLE entry, or State C on the VCM-authorised path), the CP circuit shifts to a lower signal voltage and MCPWM edge detection becomes unreliable. The J1772 current is therefore frozen while `CP_ENABLE` is still LOW: into `g_session_ac_current_A` at the IDLE_PLUG → EVSE_ENABLE transition (bypass), or into the auth context just before State C is asserted (VCM-authorised path). It is not re-derived while State C is asserted.
 
 **When:** Every 10 ms SM cycle while in `IDLE_PLUG`, provided `g_pwm_signal_valid == true`.  
 **Stored in:** `DRAM_ATTR volatile float g_session_ac_current_A` — written once per plug session at IDLE_PLUG exit; read in CHARGING entry for `frame_050` encoding.  
@@ -335,7 +370,7 @@ frame_050.d[6] = raw & 0xFF
 ## TWAI0 TX Performance Notes
 
 1. **TWAI0 TX is driven exclusively from the gptimer alarm ISR** (hardware priority, IRAM). The state machine task never calls `twai_node_transmit()` for TWAI0. This ensures sub-millisecond jitter on the 100 ms period regardless of FreeRTOS scheduler activity.
-2. **State machine task only updates frame content** in `DRAM_ATTR` frame structs (`frame_380`, `frame_5bf`). Writes happen at the 10 ms task cycle. Because frames are updated every 10 ms and transmitted every 100 ms, a partially-updated frame is possible on a 10 ms/100 ms boundary. If frame integrity issues appear in testing, add a `DRAM_ATTR volatile` dirty flag: ISR skips transmission if flag is set; task clears it after writing.
+2. **State machine task only updates frame content** in the `DRAM_ATTR` application buffers (`frame_380_data`, `frame_5bf_data`). The gptimer ISR copies both into private TX buffers under `g_twai0_frame_lock` before sealing and transmitting them, so a multi-byte field written under the same lock is never sent half-updated. Single-byte stores need no lock.
 3. **CHARGE_DISABLE step 1** writes `frame_050.d[7] = 0x00` (TWAI1 frame) before suspending the TWAI1 TX task. This is on a separate bus from TWAI0 and does not affect TWAI0 TX latency.
 4. **`vTaskResume(twai1_tx_task_hdl)`** in CHARGING entry re-enables TWAI1 TX from the state machine task (priority 21). Since TWAI1 TX task is priority 22, it will preempt the state machine task immediately on resume. Ensure `frame_050` is fully configured before calling `vTaskResume()`.
 5. **SOC** is decoded from `0x55B` by the RX dispatcher (priority 23) and written to a `DRAM_ATTR volatile float` or fixed-point variable. The state machine task reads it without a mutex; on RISC-V, 32-bit aligned reads are atomic.
@@ -344,13 +379,13 @@ frame_050.d[6] = raw & 0xFF
 
 ## Open Questions
 
-1. **VCM_AUTH timeout**: If no `0x1F2 d[2] == 0x20` (CHARGING_SLOW) is received after plug insertion, should the state machine timeout back to IDLE_PLUG (with a retry count) or enter a FAULT state? If yes, what duration?
+~~1. **VCM_AUTH timeout**~~ — RESOLVED by the VCM-authorised path: `SM_VCM_WAKE_TIMEOUT_MS` / `SM_VCM_WAKE_ATTEMPTS` bound the wake attempts, and `SM_CHARGE_REQ_TIMEOUT_MS` ends an announcement without a request (the VCM itself sends a stop request 10.24 s after a wake without a usable EVSE).
 
 2. **EVSE_ENABLE timeout**: If `GPIO_CP_ENABLE` is asserted but no TWAI1 frame arrives within N seconds, should the controller timeout into CHARGE_DISABLE? If yes, what value of N?
 
 ~~3. **IDLE_PLUG 0x5BF timing** — RESOLVED: `0x10` is broadcast for exactly **100 ms** (1 frame). ZE0 log analysis (`leaf_ac_charge.txt`) confirmed both plug-insertion events show a fixed single-cycle advance to `0x18` with no variability.~~
 
-~~4. **`0x1F2` entry trigger clarification** — RESOLVED: `d[2] == 0x20` is the only valid trigger. ZE0 log analysis (`leaf_ac_charge.txt`) shows: idle=`0x00`, CP handshake=`0x60` (~20 s, not charge-active), VCM charge command=`0x20` (single-frame step, stable for entire 251.7 s session). `0x60` is explicitly excluded — it appears before authorization and at session end. No `0x88` was observed.~~
+~~4. **`0x1F2` entry trigger clarification**~~ — CORRECTED: the request is `0x1F2` d[2] **bits 6:5** (`Charge_StatusTransitionReqest`): `0x20` normal charge, `0x60` **stop request**. `0x60` is not a handshake: it is the stop request the VCM sends 10.24 s after a wake without a usable EVSE (or with a charge timer pending) and at every power-off. Mask with `0x60` — this car also sets d[2] bits 3 and 7.
 
 5. **J1772 current clamp ceiling**: The derivation formula clamps at 32 A (single Lear OBC max). Confirm this is the correct ceiling for this installation.
 

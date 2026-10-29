@@ -39,6 +39,8 @@ These run at hardware interrupt priority and MUST complete in microseconds.
 gptimer alarm (hardware)
   └─► alarm ISR callback (IRAM_ATTR)
         └─► if (!g_twai0_tx_enabled) return   ← gate check (DRAM_ATTR volatile bool)
+        └─► copy frame_380_data / frame_5bf_data → private TX buffers (g_twai0_frame_lock)
+        └─► obc_frame_seal(): PRUN + CSUM into the copies
         └─► twai_node_transmit(twai0_hdl, &frame_380, 0)
         └─► twai_node_transmit(twai0_hdl, &frame_5bf, 0)
 ```
@@ -48,14 +50,15 @@ gptimer alarm (hardware)
 - REQUIRED: The ISR MUST check `g_twai0_tx_enabled` (`DRAM_ATTR volatile bool`) before
   any call to `twai_node_transmit()`. If false, return immediately.
 - REQUIRED: The alarm callback and both TX frame structs MUST be `IRAM_ATTR` / `DRAM_ATTR`.
+  Helpers it calls (`obc_frames.h`) are `static inline __attribute__((always_inline))`.
 - REQUIRED: `CONFIG_TWAI_IO_FUNC_IN_IRAM=y` so `twai_node_transmit()` is in IRAM.
 - `timeout` parameter to `twai_node_transmit()` is ignored in ISR context (returns
   immediately if TX queue is full).
 - RECOMMENDED: alarm period = 100 000 µs. Use `gptimer_set_alarm_action()` with
   `alarm_cfg.auto_reload_on_alarm = true`.
-- `g_twai0_tx_enabled` is set true by a 5-second one-shot `esp_timer` after the RX
-  dispatcher first observes `0x50B d[3][7:6] == 0b11` (RUN). It is cleared immediately
-  to false when `0b00` (SLEEP) is received. See `twai-config.instructions.md` §TX-Enable Gate.
+- `g_twai0_tx_enabled` follows `0x50B d[2]` (power switch ON) in the bypass build, written
+  by the RX dispatcher; in the auth build the state machine owns it. See
+  `twai-config.instructions.md` §TX-Enable Gate.
 
 ```c
 // gptimer configuration (REQUIRED fields)
@@ -149,8 +152,8 @@ static void rx_dispatcher_task(void *pvParams)
 ```
 
 - **Queue:** Single shared `QueueHandle_t rx_queue` fed by both TWAI0 and TWAI1
-  `on_rx_done` ISRs. Queue depth: **16 entries** minimum (handles burst of all 11
-  distinct target IDs with headroom).
+  `on_rx_done` ISRs. Queue depth: **16 entries** minimum (handles burst of all 15
+  distinct target IDs — 11 on TWAI0, 4 on TWAI1 — with headroom).
 - **Queue element type:** A struct containing `{ twai_node_handle_t bus, uint32_t id,
   uint8_t data[8], uint8_t dlc }` — a full value copy, not a pointer.
 - The dispatcher calls handler functions that are allowed to use FreeRTOS primitives
@@ -168,17 +171,24 @@ static void twai1_tx_task(void *pvParams)
 {
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
-        twai_node_transmit(twai1_hdl, &frame_050, pdMS_TO_TICKS(10));
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100));
+        twai1_tx_frame_050();   // copies frame_050_data under g_frame050_lock, then transmits
+        if (xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100)) == pdFALSE) {
+            last_wake = xTaskGetTickCount();   // resumed after a suspension: re-align
+        }
     }
 }
 ```
 
-- REQUIRED: Use `vTaskDelayUntil()` (not `vTaskDelay()`) for drift-free 100 ms cadence.
+- REQUIRED: Use `xTaskDelayUntil()` (not `vTaskDelay()`) for drift-free 100 ms cadence.
 - REQUIRED: The task handle MUST be stored globally so the state machine can call
   `vTaskSuspend(twai1_tx_task_hdl)` and `vTaskResume(twai1_tx_task_hdl)`.
-- When TWAI1 is suspended mid-cycle, the in-progress `vTaskDelayUntil()` wakes
-  immediately on resume and re-aligns. This is acceptable for a non-timing-critical bus.
+- REQUIRED: Re-align `last_wake` when `xTaskDelayUntil()` returns `pdFALSE`. After a
+  suspension the deadline is long past, and FreeRTOS would otherwise return immediately for
+  every missed period — thousands of back-to-back 0x050 frames after a long suspension,
+  filling the TX queue.
+- REQUIRED: Clear ChargeEnable with `twai1_frame_050_set_enable(false)`. The driver reads a
+  queued frame's buffer when it starts transmitting it, and the helper also patches the private
+  copy, so frames still queued go out disabled.
 - `timeout = pdMS_TO_TICKS(10)`: if the TX queue is full (8 entries), wait up to 10 ms
   before dropping the frame. Log a warning if the frame is dropped.
 
@@ -217,6 +227,15 @@ static void state_machine_task(void *pvParams)
   concurrent callers on the same handle).
 - REQUIRED: TWAI1 TX task is controlled via `vTaskSuspend()` / `vTaskResume()` from
   this task based on application state transitions.
+- REQUIRED: Multi-byte updates of `frame_380_data` / `frame_5bf_data` hold
+  `g_twai0_frame_lock`; updates of `frame_050_data` hold `g_frame050_lock`. Single-byte
+  stores need no lock. This task is the only writer of all three buffers.
+- REQUIRED: Decoded CAN values come from `g_sm_rx` (written only by the RX dispatcher).
+  Age each source with the task's own clock from its frame counter (`cnt_*`) and treat a
+  stale source as absent; never block on the dispatcher.
+- REQUIRED: Timed actions (EVA pulse, announcement steps, contactor steps) are tick-counted
+  across cycles, never `vTaskDelay()`, on the VCM-authorised path. The bypass path keeps
+  its two 500 ms blocking contactor delays.
 - REQUIRED: Contactor outputs (`CONT_POS`, `CONT_NEG`) MUST be de-asserted immediately
   on detection of TWAI0 bus-off or PWM signal absence.
 - RECOMMENDED: 10 ms task cycle — fast enough to react to button press (ADC updates at
@@ -236,8 +255,8 @@ Every symbol in an ISR hot path MUST be in internal RAM:
 | `g_pwm_duty_us`, `g_pwm_period_us`, `g_pwm_signal_valid` | `DRAM_ATTR volatile` | Written from MCPWM ISR, read from task |
 | `g_adc_raw_avg` | `DRAM_ATTR volatile` | Written from ADC ISR, read from task |
 | TWAI error/bus-off flags | `DRAM_ATTR volatile` | Written from TWAI ISR, read from state machine |
-| `g_twai0_tx_enabled` | `DRAM_ATTR volatile` | Read from gptimer alarm ISR; written from `esp_timer` callback and RX dispatcher |
-| `g_twai0_tx_pending` | `DRAM_ATTR volatile` | Written from RX dispatcher task; sentinel preventing timer restart during 5-second delay |
+| `g_twai0_tx_enabled` | `DRAM_ATTR volatile` | Read from gptimer alarm ISR; written from the RX dispatcher (bypass build) or the state machine task (auth build) |
+| `g_twai0_frame_lock`, private TX copies of 0x380 / 0x5BF | `DRAM_ATTR` | Taken / written inside the gptimer alarm ISR |
 
 `volatile` is REQUIRED on all variables shared between ISR writers and task readers to
 prevent compiler caching into registers.
