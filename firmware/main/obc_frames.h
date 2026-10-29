@@ -103,7 +103,7 @@ OBC_INLINE void obc_set_bits(uint8_t *byte, uint8_t mask, bool on)
 #define OBC5BF_ST_END             0x70u   /* end of charge after the stop request */
 #define OBC5BF_ST_RELAY_OPEN      0x78u
 #define OBC5BF_ST_OBC_STOP        0x80u   /* OBC-initiated stop (release switch) */
-#define OBC5BF_PFC_BUS_NOMINAL    0x65u   /* d[1] while AC is present (~404 V / 4) */
+#define OBC5BF_D1_AC_PRESENT      0x65u   /* d[1] while AC is present; meaning unknown */
 #define OBC5BF_DC_V_OFFSET        263u    /* d[3] = DC volts - 263 */
 #define OBC5BF_CSUM_OFFSET        1u
 

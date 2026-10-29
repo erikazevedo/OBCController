@@ -361,3 +361,15 @@ void twai0_frames_reset(void)
     }
     portEXIT_CRITICAL(&g_twai0_frame_lock);
 }
+
+/* The driver reads a queued frame's buffer when it starts the transmission, so patching
+ * s_tx_050 reaches every 0x050 frame still waiting in the queue. */
+void twai1_frame_050_set_enable(bool on)
+{
+    portENTER_CRITICAL(&g_frame050_lock);
+    lear050_set_enable(frame_050_data, on);
+    if (!on) {
+        lear050_set_enable(s_tx_050, false);
+    }
+    portEXIT_CRITICAL(&g_frame050_lock);
+}

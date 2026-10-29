@@ -20,7 +20,10 @@ static void twai1_tx_task(void *pvParams)
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
         twai1_tx_frame_050();
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100));
+        /* After a vTaskResume the deadline is long past: re-align instead of sending every missed period back-to-back */
+        if (xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100)) == pdFALSE) {
+            last_wake = xTaskGetTickCount();
+        }
     }
 }
 

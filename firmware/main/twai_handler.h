@@ -48,6 +48,12 @@ extern portMUX_TYPE g_frame050_lock;
 /** Restore frame_380_data / frame_5bf_data to their power-up content (bypass defaults). */
 void twai0_frames_reset(void);
 
+/**
+ * Set Lear_ChargeEnable in frame_050_data.  A disable also patches the private TX copy,
+ * so 0x050 frames already queued in the driver go out disabled too.
+ */
+void twai1_frame_050_set_enable(bool on);
+
 /* ── Custom Display Unit Frames (TWAI0) ───────────────────────────────────────────────
  * Not part of the stock ZE0 EV-CAN bus; 0x6C0/0x6C1 were not seen in any
  * captured log or DBC.  Both frames share one layout:

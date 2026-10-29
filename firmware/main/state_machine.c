@@ -155,8 +155,8 @@ static void sm_enter_charging(float session_amps)
 
 static void sm_enter_charge_disable(void)
 {
-    /* Step 1: clear ChargeEnable in the shared frame before suspending the task */
-    frame_050_data[7] = 0x00;
+    /* Step 1: clear ChargeEnable in the shared frame (and in any 0x050 still queued) before suspending the task */
+    twai1_frame_050_set_enable(false);
 
     /* Step 2: suspend TWAI1 TX (best-effort last frame may carry ChargeEnable=0) */
     vTaskSuspend(twai1_tx_task_hdl);
@@ -250,6 +250,8 @@ typedef struct {
     bool        bus_alive;      /* 0x50B within SM_VCM_SILENT_MS */
     bool        awake;          /* ... and WakeUp */
     bool        gotosleep;      /* ... and GoToSleep */
+    uint32_t    gotosleep_ms;   /* GoToSleep held for (0 while awake) */
+    bool        vcm_fresh;      /* 0x50B, 0x1F2 or 0x1D4 within SM_TX_VCM_FRESH_MS */
     bool        power_on;       /* ... and power switch ON */
     bool        wake_edge;      /* VCM woke since the last cycle */
     bool        beacon_recent;  /* 0x603/0x68C within SM_BEACON_WINDOW_MS */
@@ -408,6 +410,21 @@ static void sm_read_inputs(sm_in_t *in, uint32_t dt, int adc_mv, float pilot_a,
     in->gotosleep     = in->bus_alive && !g_sm_rx.awake;
     in->power_on      = in->bus_alive && g_sm_rx.power_on;
     in->beacon_recent = s_age_beacon.age_ms < SM_BEACON_WINDOW_MS;
+
+    static bool     s_was_gotosleep = false;
+    static uint32_t s_gotosleep_ms  = 0;
+    if (!in->gotosleep) {
+        s_gotosleep_ms = 0;
+    } else if (s_was_gotosleep) {
+        sat_add(&s_gotosleep_ms, dt);
+    }
+    s_was_gotosleep  = in->gotosleep;
+    in->gotosleep_ms = s_gotosleep_ms;
+
+    uint32_t vcm_age = s_age_50b.age_ms;
+    if (s_age_1f2.age_ms < vcm_age) vcm_age = s_age_1f2.age_ms;
+    if (s_age_1d4.age_ms < vcm_age) vcm_age = s_age_1d4.age_ms;
+    in->vcm_fresh = vcm_age <= SM_TX_VCM_FRESH_MS;
 
     in->f1f2_fresh    = s_age_1f2.age_ms < SM_VCM_SILENT_MS;
     in->req           = in->f1f2_fresh ? g_sm_rx.req_1f2 : VCM1F2_REQ_NONE;
@@ -615,9 +632,29 @@ static void sm_auth_set_lear_limit(uint16_t da)
 
 static void sm_auth_lear_enable(bool on)
 {
+    if (!on) {
+        twai1_frame_050_set_enable(false);
+        return;
+    }
     portENTER_CRITICAL(&g_frame050_lock);
-    lear050_set_enable(frame_050_data, on);
+    lear050_set_enable(frame_050_data, true);
     portEXIT_CRITICAL(&g_frame050_lock);
+}
+
+/* AC is present: command the Lear off (limit 0) until the VCM asks for power, so it is
+ * known to be disabled before any charge contactor closes */
+static void sm_auth_lear_hold_off(void)
+{
+    portENTER_CRITICAL(&g_frame050_lock);
+    frame_050_data[0] = 0x00u;
+    frame_050_data[1] = 0xDCu;
+    frame_050_data[4] = 0x00u;
+    lear050_set_ac_limit(frame_050_data, 0);
+    portEXIT_CRITICAL(&g_frame050_lock);
+    sm_auth_lear_enable(false);
+    sm_encode_frame_050_voltage();
+    s_auth.lear_limit_da = 0;
+    vTaskResume(twai1_tx_task_hdl);
 }
 
 /* 0x380 d[2]: EVSE ready while announced and the button is not pressed; release switch bit */
@@ -636,10 +673,13 @@ static void sm_auth_ac_monitor(const sm_in_t *in, uint32_t dt)
         if (!s_auth.ac_reported && in->lear_alive) {
             FRAMES_LOCK();
             obc380_set_ac_raw(frame_380_data, obc380_ac_raw_from_volts(SM_EVSE_AC_NOMINAL_V));
-            frame_5bf_data[1] = OBC5BF_PFC_BUS_NOMINAL;
+            frame_5bf_data[1] = OBC5BF_D1_AC_PRESENT;
             FRAMES_UNLOCK();
             s_auth.ac_reported = true;
             s_auth.ac_ms       = 0;
+            if (!s_auth.pos_closed) {
+                sm_auth_lear_hold_off();
+            }
         } else if (s_auth.ac_reported && !s_auth.ac_type_set) {
             sat_add(&s_auth.ac_ms, dt);
             if (s_auth.ac_ms >= 200u) {
@@ -683,10 +723,12 @@ static void sm_auth_telemetry(const sm_in_t *in, bool charging)
     FRAMES_UNLOCK();
 }
 
-/* Release State C and clear the EVSE announcement */
+/* Release State C and clear the EVSE announcement.  AC is about to go, so stop 0x050 too;
+ * never called while the Lear is enabled. */
 static void sm_auth_withdraw(void)
 {
     s_auth.ready = false;
+    vTaskSuspend(twai1_tx_task_hdl);
     gpio_set_level(GPIO_CP_ENABLE, 0);
     if (s_auth.s2_closed) {
         s_auth.s2_closed  = false;
@@ -1307,12 +1349,12 @@ static sm_state_t sm_auth_stop(const sm_in_t *in, uint32_t dt)
 static sm_state_t sm_vcm_shutdown(const sm_in_t *in, uint32_t dt)
 {
     const sm_state_t me = SM_STATE_VCM_SHUTDOWN;
-    if (!in->bus_alive || s_auth.st_ms >= SM_SLEEP_TAIL_MS) {
-        return sm_go(me, sm_auth_to_sleep(), "VCM asleep");
-    }
     if (in->awake) {
         sm_enter_vcm_standby(true);
         return sm_go(me, SM_STATE_VCM_STANDBY, "VCM woke again");
+    }
+    if (!in->bus_alive || in->gotosleep_ms >= SM_SLEEP_TAIL_MS) {
+        return sm_go(me, sm_auth_to_sleep(), "VCM asleep");
     }
     sm_auth_ac_monitor(in, dt);
     return me;
@@ -1626,10 +1668,13 @@ void state_machine_task(void *pvParams)
         }
 
         /* Auth build: the SM owns the TWAI0 TX gate.  As the OBC under VCM control it
-         * transmits while the VCM is on the bus; elsewhere it follows the power switch
-         * exactly as the bypass build's 0x50B handler does. */
+         * transmits only while VCM frames keep arriving and for SM_SLEEP_TAIL_MS after
+         * GoToSleep (TWAI0 retries an unacknowledged frame forever); elsewhere it follows
+         * the power switch exactly as the bypass build's 0x50B handler does. */
         if (!SM_SKIP_VCM_AUTH) {
-            g_twai0_tx_enabled = sm_state_is_auth_tx(state) ? in.bus_alive : g_sm_rx.power_on;
+            g_twai0_tx_enabled = sm_state_is_auth_tx(state)
+                               ? (in.vcm_fresh && in.gotosleep_ms < SM_SLEEP_TAIL_MS)
+                               : g_sm_rx.power_on;
         }
 
         /* ── 5. Safety override: immediate contactor de-assert ──────────── */

@@ -119,8 +119,13 @@
 /** Stop: no stop request or GoToSleep from the VCM this long after the contactors open → acknowledge anyway (ms). */
 #define SM_STOP_ACK_TIMEOUT_MS     30000
 
-/** After GoToSleep keep sending 0x5BF ASLEEP (0x38) this long, then go silent (ms). */
-#define SM_SLEEP_TAIL_MS           900
+/** After GoToSleep keep sending 0x5BF ASLEEP (0x38) this long, timed from the first GoToSleep, then go silent (ms).
+ *  The stock OBC's last frame is 120 ms after GoToSleep; the VCM transmits for another ~900 ms, so every frame is ACKed. */
+#define SM_SLEEP_TAIL_MS           150
+
+/** VCM-authorised states stop transmitting when no 0x50B/0x1F2/0x1D4 arrived for this long (ms).
+ *  TWAI0 retries an unacknowledged frame forever, so the bridge must never transmit to an empty bus. */
+#define SM_TX_VCM_FRESH_MS         100
 
 /** Nominal EVSE AC voltage (V): reported in 0x380 and used to convert the VCM kW command to Lear AC amps. */
 #ifndef SM_EVSE_AC_NOMINAL_V
