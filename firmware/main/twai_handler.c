@@ -1,6 +1,7 @@
 #include "twai_handler.h"
 #include "state_machine.h"
 #include "gpio_config.h"
+#include "obc_frames.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -29,13 +30,27 @@ QueueHandle_t DRAM_ATTR rx_queue = NULL;
  * ────────────────────────────────────────────────────────────────────────── */
 /* 0x380 OBC Status — d[0]=0x02 fixed, d[1]=0x04 fixed,
  * d[2]=0x10 (mode flag | power MSB=0), d[3]=0x21 (33 = 3300 W / 100)      */
-DRAM_ATTR uint8_t frame_380_data[8] = { 0x02, 0x04, 0x10, 0x21, 0x00, 0x00, 0x00, 0x00 };
+#define FRAME_380_DEFAULT { 0x02, 0x04, 0x10, 0x21, 0x00, 0x00, 0x00, 0x00 }
 /* 0x5BF OBC Charge State — d[4]=0x28 (IDLE) at power-up                    */
-DRAM_ATTR uint8_t frame_5bf_data[8] = { 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00 };
+#define FRAME_5BF_DEFAULT { 0x00, 0x00, 0x00, 0x00, 0x28, 0x00, 0x00, 0x00 }
+DRAM_ATTR uint8_t frame_380_data[8] = FRAME_380_DEFAULT;
+DRAM_ATTR uint8_t frame_5bf_data[8] = FRAME_5BF_DEFAULT;
 /* 0x050 Lear_Control — d[1]=0xDC always; other dynamic fields set in SM    */
 DRAM_ATTR uint8_t frame_050_data[8] = { 0x00, 0xDC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 /* 0x6C1 display advert — d[0]/d[1]/d[7] refreshed by the gptimer ISR; d[2..6] stay 0 */
 static DRAM_ATTR uint8_t frame_6c1_data[8] = { 0 };
+
+static const uint8_t k_frame_380_default[8] = FRAME_380_DEFAULT;
+static const uint8_t k_frame_5bf_default[8] = FRAME_5BF_DEFAULT;
+
+DRAM_ATTR portMUX_TYPE g_twai0_frame_lock = portMUX_INITIALIZER_UNLOCKED;
+DRAM_ATTR portMUX_TYPE g_frame050_lock    = portMUX_INITIALIZER_UNLOCKED;
+
+/* Private TX copies.  0x5BF queues behind 0x380 and is read by the driver after
+ * the gptimer ISR returns, so only the ISR (every 100 ms) may write these. */
+static DRAM_ATTR uint8_t s_tx_380[8];
+static DRAM_ATTR uint8_t s_tx_5bf[8];
+static uint8_t s_tx_050[8];
 
 /* twai_frame_t structs — buffer pointers set in init functions below */
 static DRAM_ATTR twai_frame_t frame_380;
@@ -60,8 +75,8 @@ static void twai0_recovery_task(void *pvParams)
 /* ── Software ID filters ─────────────────────────────────────────────────── */
 static inline bool IRAM_ATTR twai0_id_accepted(uint32_t id)
 {
-    return (id == 0x1D4u || id == 0x1DBu || id == 0x1DCu || id == 0x1F2u ||
-            id == 0x50Bu || id == 0x55Bu || id == 0x5BCu ||
+    return (id == 0x1D4u || id == 0x1DAu || id == 0x1DBu || id == 0x1DCu || id == 0x1F2u ||
+            id == 0x50Bu || id == 0x55Bu || id == 0x5BCu || id == 0x603u || id == 0x68Cu ||
             id == CAN_ID_DISPLAY_CMD);
 }
 
@@ -168,34 +183,23 @@ static bool IRAM_ATTR gptimer_alarm_cb(gptimer_handle_t timer,
         return false;
     }
 
-    /* ── 0x380 PRUN / CSUM ── */
+    /* Snapshot the application buffers; the SM holds the same lock for multi-byte updates */
+    portENTER_CRITICAL_ISR(&g_twai0_frame_lock);
+    for (int i = 0; i < 8; i++) {
+        s_tx_380[i] = frame_380_data[i];
+        s_tx_5bf[i] = frame_5bf_data[i];
+    }
+    portEXIT_CRITICAL_ISR(&g_twai0_frame_lock);
+
+    /* PRUN in d[7] bits [5:4] then CSUM in [3:0]; d[7] bits [7:6] come from the SM.
+     * CSUM = (S − 5) for 0x380 and (S − 1) for 0x5BF, S including the d[7] high nibble. */
     static DRAM_ATTR uint8_t prun_380 = 0;
     prun_380 = (prun_380 + 1u) & 0x03u;
-    /* d[7] bits [5:4] = PRUN; bits [7:6] = 0 (reserved) */
-    frame_380_data[7] = (uint8_t)(prun_380 << 4);
-    {
-        uint16_t s = 0;
-        for (int i = 0; i < 7; i++) {
-            s += (uint8_t)(frame_380_data[i] >> 4) + (uint8_t)(frame_380_data[i] & 0x0Fu);
-        }
-        s += (uint8_t)(frame_380_data[7] >> 4);   /* include PRUN nibble */
-        /* CSUM = (S − 5) & 0x0F  per 0x380 specification */
-        frame_380_data[7] = (uint8_t)((frame_380_data[7] & 0xF0u) | ((s - 5u) & 0x0Fu));
-    }
+    obc_frame_seal(s_tx_380, prun_380, OBC380_CSUM_OFFSET);
 
-    /* ── 0x5BF PRUN / CSUM ── */
     static DRAM_ATTR uint8_t prun_5bf = 0;
     prun_5bf = (prun_5bf + 1u) & 0x03u;
-    frame_5bf_data[7] = (uint8_t)(prun_5bf << 4);
-    {
-        uint16_t s = 0;
-        for (int i = 0; i < 7; i++) {
-            s += (uint8_t)(frame_5bf_data[i] >> 4) + (uint8_t)(frame_5bf_data[i] & 0x0Fu);
-        }
-        s += (uint8_t)(frame_5bf_data[7] >> 4);   /* include PRUN nibble */
-        /* CSUM = (S − 1) & 0x0F  per 0x5BF specification */
-        frame_5bf_data[7] = (uint8_t)((frame_5bf_data[7] & 0xF0u) | ((s - 1u) & 0x0Fu));
-    }
+    obc_frame_seal(s_tx_5bf, prun_5bf, OBC5BF_CSUM_OFFSET);
 
     twai_node_transmit(twai0_hdl, &frame_380, 0);
     twai_node_transmit(twai0_hdl, &frame_5bf, 0);
@@ -275,10 +279,10 @@ void twai_handler_init(void)
     };
     ESP_ERROR_CHECK(twai_node_register_event_callbacks(twai1_hdl, &twai1_cbs, NULL));
 
-    /* ── frame_050 buffer pointer ────────────────────────────────────── */
+    /* ── frame_050 buffer pointer (private copy, see twai1_tx_frame_050) ── */
     frame_050 = (twai_frame_t){
         .header     = { .id = 0x050u, .dlc = 8 },
-        .buffer     = frame_050_data,
+        .buffer     = s_tx_050,
         .buffer_len = 8,
     };
 }
@@ -288,12 +292,12 @@ void gptimer_init_twai0_tx(void)
     /* Initialise TWAI0 TX frame buffer pointers before the ISR can fire */
     frame_380 = (twai_frame_t){
         .header     = { .id = 0x380u, .dlc = 8 },
-        .buffer     = frame_380_data,
+        .buffer     = s_tx_380,
         .buffer_len = 8,
     };
     frame_5bf = (twai_frame_t){
         .header     = { .id = 0x5BFu, .dlc = 8 },
-        .buffer     = frame_5bf_data,
+        .buffer     = s_tx_5bf,
         .buffer_len = 8,
     };
     frame_6c1 = (twai_frame_t){
@@ -337,7 +341,23 @@ void twai_handler_enable(void)
 
 void twai1_tx_frame_050(void)
 {
+    portENTER_CRITICAL(&g_frame050_lock);
+    for (int i = 0; i < 8; i++) {
+        s_tx_050[i] = frame_050_data[i];
+    }
+    portEXIT_CRITICAL(&g_frame050_lock);
+
     if (twai_node_transmit(twai1_hdl, &frame_050, pdMS_TO_TICKS(10)) != ESP_OK) {
         ESP_LOGW(TAG, "twai1 0x050 TX dropped");
     }
+}
+
+void twai0_frames_reset(void)
+{
+    portENTER_CRITICAL(&g_twai0_frame_lock);
+    for (int i = 0; i < 8; i++) {
+        frame_380_data[i] = k_frame_380_default[i];
+        frame_5bf_data[i] = k_frame_5bf_default[i];
+    }
+    portEXIT_CRITICAL(&g_twai0_frame_lock);
 }
