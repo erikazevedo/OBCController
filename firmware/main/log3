@@ -1,0 +1,273 @@
+I (23) boot: ESP-IDF v6.0.1 2nd stage bootloader
+I (23) boot: compile time Jul  7 2026 18:36:51
+I (24) boot: chip revision: v0.2
+I (24) boot: efuse block revision: v0.3
+I (26) boot.esp32c6: SPI Speed      : 80MHz
+I (30) boot.esp32c6: SPI Mode       : DIO
+I (34) boot.esp32c6: SPI Flash Size : 2MB
+I (38) boot: Enabling RNG early entropy source...
+I (42) boot: Partition Table:
+I (45) boot: ## Label            Usage          Type ST Offset   Length
+I (51) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (64) boot:  2 factory          factory app      00 00 00010000 00100000
+I (71) boot: End of partition table
+I (74) esp_image: segment 0: paddr=00010020 vaddr=42028020 size=0e760h ( 59232) map
+I (93) esp_image: segment 1: paddr=0001e788 vaddr=40800000 size=01890h (  6288) load
+I (95) esp_image: segment 2: paddr=00020020 vaddr=42000020 size=218a0h (137376) map
+I (122) esp_image: segment 3: paddr=000418c8 vaddr=40801890 size=0b028h ( 45096) load
+I (133) esp_image: segment 4: paddr=0004c8f8 vaddr=4080c8c0 size=02128h (  8488) load
+I (138) boot: Loaded app from partition at offset 0x10000
+I (139) boot: Disabling RNG early entropy source...
+I (350) cpu_start: Unicore app
+I (359) cpu_start: GPIO 17 and 16 are used as console UART I/O pins
+I (359) cpu_start: Pro cpu start user code
+I (359) cpu_start: cpu freq: 160000000 Hz
+I (361) app_init: Application information:
+I (365) app_init: Project name:     test_firmware
+I (369) app_init: App version:      a94e2d9-dirty
+I (374) app_init: Compile time:     Oct 31 2026 09:25:35
+I (379) app_init: ELF file SHA256:  500de6c9a...
+I (383) app_init: ESP-IDF:          v6.0.1
+I (387) efuse_init: Min chip rev:     v0.0
+I (391) efuse_init: Max chip rev:     v0.99 
+I (395) efuse_init: Chip rev:         v0.2
+I (399) heap_init: Initializing. RAM available for dynamic allocation:
+I (405) heap_init: At 4080FD10 len 0006C900 (434 KiB): RAM
+I (410) heap_init: At 4087C610 len 00002F54 (11 KiB): RAM
+I (415) heap_init: At 50000000 len 00003FE8 (15 KiB): RTCRAM
+I (421) spi_flash: detected chip: generic
+I (424) spi_flash: flash io: dio
+W (427) spi_flash: Detected size(4096k) larger than the size in the binary image header(2048k). Using the size in the binary image header.
+I (440) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (446) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (461) main_task: Started on CPU0
+I (463) main_task: Calling app_main()
+E (470) esp_twai: _node_queue_tx(580): node is bus off
+W (471) twai: twai1 0x050 TX dropped
+I (475) sm: VCM EV-CAN silent
+I (477) sm: Lear silent
+I (480) main_task: Returned from app_main()
+I (485) sm: VCM 0x1F2 d0=0C d2=00 req=none mode=10 (awake, no charge)
+I (490) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+I (494) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=60
+I (500) sm: HV bus 2 V (0x1DA)
+I (535) sm: VCM EV-CAN active
+I (535) sm: VCM 0x50B d2=00 d3=C0 (WakeUp, power switch OFF)
+I (1795) sm: VCM 0x1F2 d0=04 d2=60 req=STOP mode=55 (shutdown)
+I (1805) sm: VCM 0x1F2 d0=64 d2=60 req=STOP mode=56 (shutdown)
+I (1815) sm: VCM 0x1F2 d0=6C d2=60 req=STOP mode=58 (shutdown)
+I (1915) sm: VCM 0x1F2 d0=6C d2=60 req=STOP mode=60 (shutdown)
+I (1925) sm: VCM 0x1F2 d0=6C d2=60 req=STOP mode=62 (shutdown)
+I (2005) sm: VCM 0x1F2 d0=6C d2=60 req=STOP mode=63 (shutdown)
+I (2075) sm: VCM 0x50B d2=00 d3=00 (GoToSleep, power switch OFF)
+I (3495) sm: VCM EV-CAN silent
+I (22395) sm: SM: SLEEP -> VCM_WAKE (activation pulse, attempt 1/3, pilot 15.0 A)
+I (22475) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=1 (start-up)
+I (22475) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=40
+I (22505) sm: VCM EV-CAN active
+I (22505) sm: VCM 0x50B d2=00 d3=C0 (WakeUp, power switch OFF)
+I (22505) sm: SM: VCM_WAKE -> VCM_AUTH (VCM awake)
+I (22525) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=2 (start-up)
+I (22575) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=4 (start-up)
+I (22575) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=1 d6=E0
+I (22705) sm: SM: EVSE announced, State C asserted (pilot 15.1 A)
+I (22785) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=5 (start-up)
+I (22795) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=7 (start-up)
+I (22845) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=109 (entering charge)
+I (22855) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=110 (entering charge)
+I (22865) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=113 (entering charge)
+I (22865) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=1 d6=E0
+I (22866) sm: SM: VCM_AUTH -> AUTH_START (normal charge request)
+I (23015) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=114 (entering charge)
+I (23045) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=115 (entering charge)
+I (23135) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=117 (entering charge)
+I (23165) sm: HV bus 38 V (0x1DA)
+I (23415) sm: HV bus 388 V (0x1DA)
+I (23435) sm: VCM 0x1F2 d0=00 d2=20 req=NORMAL mode=118 (entering charge)
+I (23535) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=120 (entering charge)
+I (23535) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=1 d6=E0
+I (24325) sm: Lear broadcasting
+I (24325) sm: Lear DC 0.0 V 0.0 A
+I (24325) sm: SM: AC at the Lear 1620 ms after State C
+I (25535) sm: SM: charge contactors closed (HV bus 388 V)
+I (26485) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=130 (charging)
+I (26505) sm: VCM 0x1F2 d0=30 d2=20 req=NORMAL mode=130 (charging)
+I (26505) sm: VCM 0x1F2 max charge power 100 W (d1=65)
+I (26505) sm: SM: Lear enabled, AC limit 0.8 A
+I (26508) sm: SM: AUTH_START -> AUTH_CHARGING (VCM power command)
+I (26755) sm: VCM 0x1F2 max charge power 1800 W (d1=76)
+I (28515) sm: VCM 0x1F2 d0=B0 d2=20 req=NORMAL mode=130 (charging)
+I (34325) sm: Lear DC 387.8 V 3.2 A
+I (44325) sm: Lear DC 387.8 V 3.2 A
+I (54325) sm: Lear DC 387.8 V 3.2 A
+I (61555) sm: SM: AUTH_CHARGING -> AUTH_STOP (connector button or unplug)
+I (61595) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+I (64325) sm: Lear DC 387.2 V 0.0 A
+I (65175) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=0 d6=60
+I (65395) sm: VCM 0x1F2 d0=30 d2=60 req=STOP mode=144 (charge shutdown)
+I (65405) sm: VCM 0x1F2 d0=70 d2=60 req=STOP mode=146 (charge shutdown)
+I (66415) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=50 (shutdown)
+I (66415) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=0 d6=60
+I (66555) sm: HV bus 364 V (0x1DA)
+I (66805) sm: HV bus 298 V (0x1DA)
+I (66875) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=51 (shutdown)
+I (66875) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=60
+I (66915) sm: SM: charge contactors open
+I (66925) sm: SM: AUTH_STOP -> VCM_STANDBY (stop request acknowledged)
+I (67055) sm: HV bus 240 V (0x1DA)
+I (67305) sm: HV bus 188 V (0x1DA)
+I (67555) sm: HV bus 142 V (0x1DA)
+I (67805) sm: HV bus 100 V (0x1DA)
+I (68055) sm: HV bus 62 V (0x1DA)
+I (68165) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=52 (shutdown)
+I (68375) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=55 (shutdown)
+I (68385) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=56 (shutdown)
+I (68385) sm: HV bus 40 V (0x1DA)
+I (68395) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=58 (shutdown)
+I (68475) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=60 (shutdown)
+I (68485) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=62 (shutdown)
+I (68565) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=63 (shutdown)
+I (68605) sm: VCM 0x50B d2=00 d3=00 (GoToSleep, power switch OFF)
+I (68605) sm: SM: VCM_STANDBY -> VCM_SHUTDOWN (GoToSleep)
+I (68755) sm: SM: VCM_SHUTDOWN -> SLEEP (VCM asleep)
+I (70025) sm: VCM EV-CAN silent
+I (74325) sm: Lear DC 0.0 V 0.0 A
+I (78765) sm: SM: SLEEP -> VCM_WAKE (activation pulse, attempt 1/3, pilot 15.0 A)
+I (78785) sm: VCM 0x1F2 d0=68 d2=00 req=none mode=1 (start-up)
+I (78795) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=2 (start-up)
+I (78845) sm: VCM EV-CAN active
+I (78845) sm: VCM 0x50B d2=00 d3=C0 (WakeUp, power switch OFF)
+I (78845) sm: SM: VCM_WAKE -> VCM_AUTH (VCM awake)
+I (78885) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=4 (start-up)
+I (78985) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=1 d6=E0
+I (79045) sm: SM: EVSE announced, State C asserted (pilot 15.0 A)
+I (79045) sm: SM: Lear still broadcasting from the last session — AC counts from +2500 ms
+I (79055) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=5 (start-up)
+I (79055) sm: HV bus 14 V (0x1DA)
+I (79065) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=7 (start-up)
+I (79115) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=109 (entering charge)
+I (79125) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=110 (entering charge)
+I (79135) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=113 (entering charge)
+I (79135) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=1 d6=E0
+I (79136) sm: SM: VCM_AUTH -> AUTH_START (normal charge request)
+I (79285) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=114 (entering charge)
+I (79315) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=115 (entering charge)
+I (79405) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=117 (entering charge)
+I (79435) sm: HV bus 46 V (0x1DA)
+I (79685) sm: HV bus 388 V (0x1DA)
+I (79705) sm: VCM 0x1F2 d0=00 d2=20 req=NORMAL mode=118 (entering charge)
+I (79815) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=120 (entering charge)
+I (79815) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=1 d6=E0
+I (81305) sm: Lear silent
+I (82765) sm: Lear broadcasting
+I (82765) sm: SM: AC at the Lear 3720 ms after State C
+I (83975) sm: SM: charge contactors closed (HV bus 388 V)
+I (84325) sm: Lear DC 387.2 V 0.0 A
+I (84995) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=130 (charging)
+I (85005) sm: VCM 0x1F2 max charge power 100 W (d1=65)
+I (85005) sm: SM: Lear enabled, AC limit 0.8 A
+I (85005) sm: SM: AUTH_START -> AUTH_CHARGING (VCM power command)
+I (85255) sm: VCM 0x1F2 max charge power 1800 W (d1=76)
+I (86975) sm: VCM 0x1F2 d0=10 d2=60 req=STOP mode=144 (charge shutdown)
+I (86975) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+I (86975) sm: SM: AUTH_CHARGING -> AUTH_STOP (stop request)
+I (86985) sm: VCM 0x1F2 d0=70 d2=60 req=STOP mode=146 (charge shutdown)
+I (87085) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=0 d6=60
+I (87995) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=50 (shutdown)
+I (87995) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=0 d6=60
+I (88135) sm: HV bus 366 V (0x1DA)
+I (88385) sm: HV bus 298 V (0x1DA)
+I (88455) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=51 (shutdown)
+I (88455) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=60
+I (88495) sm: SM: charge contactors open
+I (88505) sm: SM: AUTH_STOP -> VCM_STANDBY (stop request acknowledged)
+I (88635) sm: HV bus 240 V (0x1DA)
+I (88885) sm: HV bus 188 V (0x1DA)
+I (89135) sm: HV bus 142 V (0x1DA)
+I (89385) sm: HV bus 100 V (0x1DA)
+I (89635) sm: HV bus 62 V (0x1DA)
+I (89745) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=52 (shutdown)
+I (89955) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=55 (shutdown)
+I (89955) sm: HV bus 40 V (0x1DA)
+I (89965) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=56 (shutdown)
+I (89975) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=58 (shutdown)
+I (90055) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=60 (shutdown)
+I (90065) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=62 (shutdown)
+I (90145) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=63 (shutdown)
+I (90215) sm: VCM 0x50B d2=00 d3=00 (GoToSleep, power switch OFF)
+I (90215) sm: SM: VCM_STANDBY -> VCM_SHUTDOWN (GoToSleep)
+I (90365) sm: SM: VCM_SHUTDOWN -> SLEEP (VCM asleep)
+I (91635) sm: VCM EV-CAN silent
+I (94325) sm: Lear DC 0.0 V 0.0 A
+W (94625) sm: SM: not waking the VCM until the plug is removed (session finished)
+I (104325) sm: Lear DC 0.0 V 0.0 A
+I (110955) sm: Lear silent
+I (128605) sm: SM: SLEEP -> VCM_WAKE (activation pulse, attempt 1/3, pilot 15.1 A)
+I (128685) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=1 (start-up)
+I (128685) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=40
+I (128715) sm: VCM EV-CAN active
+I (128715) sm: VCM 0x50B d2=00 d3=C0 (WakeUp, power switch OFF)
+I (128715) sm: SM: VCM_WAKE -> VCM_AUTH (VCM awake)
+I (128735) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=2 (start-up)
+I (128785) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=4 (start-up)
+I (128785) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=1 d6=E0
+I (128915) sm: SM: EVSE announced, State C asserted (pilot 15.0 A)
+I (128995) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=5 (start-up)
+I (128995) sm: HV bus 6 V (0x1DA)
+I (129005) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=7 (start-up)
+I (129055) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=109 (entering charge)
+I (129065) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=110 (entering charge)
+I (129075) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=113 (entering charge)
+I (129075) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=1 d6=E0
+I (129076) sm: SM: VCM_AUTH -> AUTH_START (normal charge request)
+I (129225) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=114 (entering charge)
+I (129255) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=115 (entering charge)
+I (129335) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=117 (entering charge)
+I (129375) sm: HV bus 44 V (0x1DA)
+I (129625) sm: HV bus 388 V (0x1DA)
+I (129645) sm: VCM 0x1F2 d0=00 d2=20 req=NORMAL mode=118 (entering charge)
+I (129745) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=120 (entering charge)
+I (129745) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=1 d6=E0
+I (130155) sm: Lear broadcasting
+I (130155) sm: Lear DC 0.0 V 0.0 A
+I (130155) sm: SM: AC at the Lear 1240 ms after State C
+I (131365) sm: SM: charge contactors closed (HV bus 388 V)
+I (132295) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=130 (charging)
+I (132305) sm: VCM 0x1F2 max charge power 100 W (d1=65)
+I (132305) sm: SM: Lear enabled, AC limit 0.8 A
+I (132305) sm: SM: AUTH_START -> AUTH_CHARGING (VCM power command)
+I (132555) sm: VCM 0x1F2 max charge power 1800 W (d1=76)
+I (134315) sm: VCM 0x1F2 d0=10 d2=60 req=STOP mode=144 (charge shutdown)
+I (134315) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+I (134315) sm: SM: AUTH_CHARGING -> AUTH_STOP (stop request)
+I (134325) sm: VCM 0x1F2 d0=70 d2=60 req=STOP mode=146 (charge shutdown)
+I (134375) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=0 d6=60
+I (135345) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=50 (shutdown)
+I (135345) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=0 d6=60
+I (135485) sm: HV bus 364 V (0x1DA)
+I (135735) sm: HV bus 298 V (0x1DA)
+I (135805) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=51 (shutdown)
+I (135805) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=60
+I (135845) sm: SM: charge contactors open
+I (135855) sm: SM: AUTH_STOP -> VCM_STANDBY (stop request acknowledged)
+I (135985) sm: HV bus 240 V (0x1DA)
+I (136235) sm: HV bus 188 V (0x1DA)
+I (136485) sm: HV bus 142 V (0x1DA)
+I (136735) sm: HV bus 100 V (0x1DA)
+I (136985) sm: HV bus 62 V (0x1DA)
+I (137095) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=52 (shutdown)
+I (137295) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=55 (shutdown)
+I (137305) sm: VCM 0x1F2 d0=60 d2=60 req=STOP mode=56 (shutdown)
+I (137305) sm: HV bus 40 V (0x1DA)
+I (137315) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=58 (shutdown)
+I (137405) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=60 (shutdown)
+I (137415) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=62 (shutdown)
+I (137515) sm: VCM 0x1F2 d0=68 d2=60 req=STOP mode=63 (shutdown)
+I (137525) sm: VCM 0x50B d2=00 d3=00 (GoToSleep, power switch OFF)
+I (137525) sm: SM: VCM_STANDBY -> VCM_SHUTDOWN (GoToSleep)
+I (137675) sm: SM: VCM_SHUTDOWN -> SLEEP (VCM asleep)
+I (138945) sm: VCM EV-CAN silent
+I (140155) sm: Lear DC 0.0 V 0.0 A
+W (141935) sm: SM: not waking the VCM until the plug is removed (session finished)
+I (146455) sm: Lear silent

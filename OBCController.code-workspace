@@ -5,6 +5,12 @@
 		},
 		{
 			"path": "firmware"
+		},
+		{
+			"path": "../LeafOBCBridge/hardware"
+		},
+		{
+			"path": "../LeafOBCBridge"
 		}
 	],
 	"settings": {

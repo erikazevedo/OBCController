@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../LeafOBCBridge"
+		},
+		{
+			"path": "."
+		},
+		{
+			"path": "../LeafLogs"
+		}
+	],
+	"settings": {}
+}
