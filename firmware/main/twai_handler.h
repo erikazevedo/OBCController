@@ -45,7 +45,7 @@ extern uint8_t frame_050_data[8];   /* 0x050  Lear_Control      — g_frame050_l
 extern portMUX_TYPE g_twai0_frame_lock;
 extern portMUX_TYPE g_frame050_lock;
 
-/** Restore frame_380_data / frame_5bf_data to their power-up content (bypass defaults). */
+/** Restore frame_380_data / frame_5bf_data to their power-up content (idle OBC: 0x5BF status 0x28). */
 void twai0_frames_reset(void);
 
 /**

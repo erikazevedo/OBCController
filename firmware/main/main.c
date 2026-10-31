@@ -10,8 +10,6 @@
 #include "state_machine.h"
 #include "rx_dispatcher.h"
 
-static const char *TAG = "main";
-
 /* TWAI1 TX task handle — suspend/resume controlled by state_machine_task */
 TaskHandle_t twai1_tx_task_hdl = NULL;
 

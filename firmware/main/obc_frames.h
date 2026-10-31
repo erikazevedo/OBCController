@@ -1,8 +1,8 @@
 #pragma once
 /*
  * Pure encode/decode helpers for the Nissan LEAF ZE0 EV-CAN frames the bridge
- * transmits (0x380, 0x5BF) or decodes (0x1F2, 0x1D4, 0x50B, 0x1DA, 0x1DB, 0x1DC) and for
- * the Lear charger frames on TWAI1 (0x050, 0x616, 0x617).
+ * transmits (0x380, 0x5BF) or decodes (0x1F2, 0x1D4, 0x50B, 0x1DA) and for the
+ * Lear charger frames on TWAI1 (0x050, 0x617).
  *
  * Header-only with no ESP-IDF dependencies so the same code can be checked on a
  * host against real captures.  Every helper is force-inlined because the
@@ -189,49 +189,9 @@ OBC_INLINE uint16_t inv1da_bus_dv(const uint8_t *d)
     return (uint16_t)(raw * 5u);
 }
 
-/* ── 0x1DB / 0x1DC LBC (RX, 10 ms) ─────────────────────────────────────────── */
-/* Battery current: 11-bit two's complement x 0.5 A in d[0] and d[1] bits 7:5, returned in 0.5 A
- * as -raw: positive = discharging, negative = charging. */
-OBC_INLINE int16_t lbc1db_current_ha(const uint8_t *d)
-{
-    int16_t raw = (int16_t)(((uint16_t)d[0] << 3) | (d[1] >> 5));
-    if (raw & 0x400) {
-        raw = (int16_t)(raw - 0x800);
-    }
-    return (int16_t)-raw;
-}
-
-OBC_INLINE uint8_t lbc1db_failsafe(const uint8_t *d)    { return (uint8_t)(d[1] & 0x07u); }
-OBC_INLINE uint8_t lbc1db_relay_cut(const uint8_t *d)   { return (uint8_t)((d[1] >> 3) & 0x03u); }
-OBC_INLINE bool    lbc1db_full_charge(const uint8_t *d) { return (d[3] & 0x10u) != 0u; }   /* LB_Full_CHARGE_flag */
-OBC_INLINE bool    lbc1db_main_relay(const uint8_t *d)  { return (d[3] & 0x20u) != 0u; }
-
-/* LB_MAX_POWER_FOR_CHARGER: 10 bits x 0.1 kW in d[2] bits 3:0 and d[3] bits 7:2 (the DBC adds a -10 kW offset) */
-OBC_INLINE uint16_t lbc1dc_max_charger_raw(const uint8_t *d)
-{
-    return (uint16_t)(((uint16_t)(d[2] & 0x0Fu) << 6) | (d[3] >> 2));
-}
-
-/* LB_Charge_Power_Status (DBC): d[3] bits 1:0 */
-OBC_INLINE uint8_t lbc1dc_charge_status(const uint8_t *d) { return (uint8_t)(d[3] & 0x03u); }
-
 /* ── Lear charger (TWAI1) ──────────────────────────────────────────────────── */
 OBC_INLINE uint16_t lear617_dc_dv(const uint8_t *d) { return (uint16_t)(((uint16_t)d[0] << 8) | d[1]); }
 OBC_INLINE uint16_t lear617_dc_da(const uint8_t *d) { return (uint16_t)(((uint16_t)d[2] << 8) | d[3]); }
-/* Lear_BusVoltage: d[4] x 0.1 V, the Lear's 12 V auxiliary supply */
-OBC_INLINE uint8_t  lear617_aux_dv(const uint8_t *d) { return d[4]; }
-
-/* 0x618 Lear_ACCurrent: big-endian d[0..1]; x 0.1 per the DBC (scale unverified for a single charger) */
-OBC_INLINE uint16_t lear618_ac_raw(const uint8_t *d) { return (uint16_t)(((uint16_t)d[0] << 8) | d[1]); }
-
-/* 0x274 Lear_MasterTemp: d[6] - 40 = deg C, 0xFF = not available */
-OBC_INLINE uint8_t  lear274_master_temp_raw(const uint8_t *d) { return d[6]; }
-
-/* 0x616 Lear_ControlEcho (inferred: mirrors the last 0x050): ChargeEnable d[7] bit 0, target voltage d[2..3]
- * and AC limit d[5..6], both in 0.1 units */
-OBC_INLINE bool     lear616_enable(const uint8_t *d)   { return (d[7] & 0x01u) != 0u; }
-OBC_INLINE uint16_t lear616_target_dv(const uint8_t *d)   { return (uint16_t)(((uint16_t)d[2] << 8) | d[3]); }
-OBC_INLINE uint16_t lear616_ac_limit_da(const uint8_t *d) { return (uint16_t)(((uint16_t)d[5] << 8) | d[6]); }
 
 /* 0x050 Lear_Control: AC current limit in 0.1 A, big-endian d[5..6]. */
 OBC_INLINE void lear050_set_ac_limit(uint8_t *d, uint16_t deci_amps)

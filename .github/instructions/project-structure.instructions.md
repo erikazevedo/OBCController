@@ -29,7 +29,7 @@ OBCController/
     │   ├── mcpwm_capture.h
     │   ├── adc_reader.c            # ADC continuous DMA init, on_conv_done ISR, calibration handle
     │   ├── adc_reader.h
-    │   ├── state_machine.c         # Application state machine task body (bypass + VCM-authorised paths)
+    │   ├── state_machine.c         # Application state machine task body (VCM-authorised charging)
     │   ├── state_machine.h         # SM flags, g_sm_rx decoded CAN status, runtime settings
     │   ├── sm_config.h             # REQUIRED: all state machine tunables
     │   ├── obc_frames.h            # Header-only EV-CAN / Lear frame encoders, decoders and CSUM (no IDF deps)

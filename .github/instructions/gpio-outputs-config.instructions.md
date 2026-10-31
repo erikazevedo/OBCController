@@ -118,10 +118,10 @@ activation request on OBC pin 18 (VCM pin 96). The FSM scope trace (EVC-78) show
 ≈ 4 V pulse of ≈ 1 s when the charge connector is inserted; the VCM wakes in charge mode
 only with the power switch OFF.
 
-The state machine pulses it for `SM_EVA_PULSE_MS` (1000 ms) on the VCM-authorised path
-(`SM_SKIP_VCM_AUTH == 0`). The pulse is tick-counted, not a blocking delay, and
-`sm_eva_tick()` runs every cycle in every state so the line can never stay asserted; every
-exit to SLEEP or to the bypass path also de-asserts it.
+The state machine pulses it for `SM_EVA_PULSE_MS` (1000 ms) to wake the VCM for a charge.
+The pulse is tick-counted, not a blocking delay, and `sm_eva_tick()` runs every cycle in
+every state so the line can never stay asserted; every exit to SLEEP or POWER_ON also
+de-asserts it.
 **Do not leave EVA_REQ asserted indefinitely** — the downstream PNP drive circuit is
 not intended for continuous conduction.
 
@@ -129,7 +129,7 @@ not intended for continuous conduction.
 
 `GPIO_PLUG_SIG` pulls OBC pin 21 to ground, which lights the plug icon on the combination
 meter (verified on the car). The state machine drives it HIGH while the ADC reports a
-plug (zone A or B) and LOW otherwise, in both builds. `SM_PLUG_SIG_ENABLE 0` leaves it LOW.
+plug (zone A or B) and LOW otherwise, in every state. `SM_PLUG_SIG_ENABLE 0` leaves it LOW.
 
 ---
 
@@ -141,10 +141,9 @@ sequence and opening sequence** to protect against pre-charge faults or arcing:
 
 - RECOMMENDED closure sequence: energise pre-charge path before asserting CONT_POS and
   CONT_NEG simultaneously, if pre-charge is part of the system design.
-- Implemented: CONT_NEG, then CONT_POS 500 ms later; opening in reverse. Both paths close
-  onto a live HV bus — the bypass path because the car is ON, the VCM-authorised path only
-  after `0x1D4` reports HV live (the VCM has precharged and closed its main relays). The
-  Lear output capacitance is not precharged first. On the VCM-authorised path the
+- Implemented: CONT_NEG, then CONT_POS 500 ms later; opening in reverse. The contactors
+  close onto a live HV bus, only after `0x1D4` reports HV live (the VCM has precharged and
+  closed its main relays). The Lear output capacitance is not precharged first. The
   contactors open only once the Lear output is below 1 A, and a stop between NEG and POS
   opens NEG at once.
 - REQUIRED: both contactors MUST be de-asserted (driven LOW) immediately on any

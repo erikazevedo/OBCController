@@ -126,12 +126,11 @@ buffers. The TWAI1 task does the same for `0x050` under `g_frame050_lock`.
 Transmission of 0x380, 0x5BF and 0x6C1 is gated by `DRAM_ATTR volatile bool g_twai0_tx_enabled`.
 There is no start-up delay: the stock OBC answers 250 ms after the VCM wakes.
 
-| Build | Owner | Rule |
-|---|---|---|
-| `SM_SKIP_VCM_AUTH == 1` (bypass) | RX dispatcher, `handle_50b()` | `g_twai0_tx_enabled = (0x50B d[2] != 0x00)` on every 0x50B frame: transmit while the power switch is ON |
-| `SM_SKIP_VCM_AUTH == 0` (hybrid) | State machine task, end of each cycle | VCM-authorised states: transmit while a VCM frame (`0x50B`/`0x1F2`/`0x1D4`) arrived within `SM_TX_VCM_FRESH_MS` and GoToSleep has lasted less than `SM_SLEEP_TAIL_MS` (the VCM is awake in a charge wake with d[2] = 0x00). Every other state: the bypass rule |
+| Owner | Rule |
+|---|---|
+| State machine task, end of each cycle | VCM-authorised states: transmit while a VCM frame (`0x50B`/`0x1F2`/`0x1D4`) arrived within `SM_TX_VCM_FRESH_MS` and GoToSleep has lasted less than `SM_SLEEP_TAIL_MS` (the VCM is awake in a charge wake with d[2] = 0x00). SLEEP and POWER_ON: transmit while the power switch is ON (`0x50B` d[2] != 0x00, fresh within `SM_VCM_SILENT_MS`) |
 
-> **Do not gate on `0x50B d[2]` alone in the auth build:** a charge wake keeps d[2] = `0x00`
+> **Do not gate on `0x50B d[2]` alone:** a charge wake keeps d[2] = `0x00`
 > for the whole session (only d[3][7:6] = `11` shows the VCM is awake), so the bridge would
 > stay silent and the VCM would time out after 10.24 s.
 

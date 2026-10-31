@@ -5,6 +5,8 @@ applyTo: "**/twai*"
 
 TWAI1 carries communication between the ESP32-C6 and the Lear OBC (On-Board Charger). The bus operates at 500 kbit/s. Five message IDs are defined: one TX frame sent by the controller and four RX frames sent by the OBC.
 
+> **The Lear broadcasts whenever it is powered** (≈ 1 Hz) — also with no AC (car in READY, no plug) and for ≈ 6–25 s after the VCM sleeps — so a Lear frame on its own does not mean AC is present. See `state-machine.instructions.md`, **Lear hold-off**.
+
 ---
 
 ## 0x050 — Lear_Control
@@ -74,7 +76,7 @@ No signals are defined in the DBC for this message. The layout is inferred from 
 | 6     | echoed ACCurrentLimit | Low byte of (amps × 10)         |                                              |
 | 7     | echoed ChargeEnable   | bit 0: `1` = enabled, `0` = disabled |                                        |
 
-> **Source note:** The 0x616 field layout is inferred from observed OBC behavior (ControlEcho mirrors the last received 0x050). No DBC signals are formally defined for this message ID.
+> **Source note:** No DBC signals are defined for this message ID. Confirmed on this Lear (2026-10-31): d[2..3], d[5..6] and d[7] bit 0 echo the last 0x050 target voltage, AC limit and ChargeEnable (e.g. `400.0 V`, `14.1 A`, enable `1`), and read all zero before the first 0x050. Bytes 0, 1 and 4 are still inferred.
 
 ---
 
@@ -89,13 +91,14 @@ No signals are defined in the DBC for this message. The layout is inferred from 
 | 1    | Lear_DCVoltage  | Low byte of raw                 |                                  |
 | 2    | Lear_DCCurrent  | High byte of raw                | Big-endian 16-bit, unit = 0.1 A  |
 | 3    | Lear_DCCurrent  | Low byte of raw                 |                                  |
-| 4    | Lear_BusVoltage | Single byte, unit = 0.1 V      | 12 V auxiliary bus voltage       |
+| 4    | Lear_BusVoltage | Single byte (DBC: unit = 0.1 V) | **Not a 12 V reading on this Lear** — see note |
 | 5–7  | (undefined)     | —                               |                                  |
 
 **Decode examples:**
 - Bytes `[0x17, 0x70]` → raw = 6000 → **600.0 V DC**
 - Bytes `[0x00, 0xC8]` → raw = 200 → **20.0 A DC**
-- Byte `[0x78]` → raw = 120 → **12.0 V auxiliary bus**
+
+> **d[4] meaning unconfirmed.** The DBC calls it `Lear_BusVoltage` (0.1 V, 12 V auxiliary bus), but this Lear reports `0x0A`–`0x10` while powered (1.0–1.6 V at that scale). An earlier LeafOBCBridge build decoded d[4..5] as a PFC bus voltage (big-endian × 0.1 V: 204.8 → 409.6 V, d[5] = `0x00`). Not used by the firmware.
 
 ---
 

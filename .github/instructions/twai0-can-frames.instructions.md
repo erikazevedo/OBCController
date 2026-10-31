@@ -197,7 +197,7 @@ Verified against every frame in ZE0 AC-charge captures.
 | d[2] | [7:0] | Battery voltage bits [9:2] | Combined with d[3][7:6] to form 10-bit unsigned value |
 | d[3] | [7:6] | Battery voltage bits [1:0] | Combined with d[2] |
 | d[3] | [5] | Main relay on flag | 1 = main relay on (LB_MainRelayOn) |
-| d[3] | [4] | Full charge flag | `LB_Full_CHARGE_flag` (DBC); 0 throughout the AC-charge capture (SOC 74.5 %). Decoded for the signal trace only |
+| d[3] | [4] | Full charge flag | `LB_Full_CHARGE_flag` (DBC); 0 in all 28,595 frames of the AC-charge capture (SOC 74.5 %). Not decoded |
 | d[3] | [3] | HV interlock | 1 = interlock chain closed (required before relay-on is granted) |
 | d[4] | [6:0] | Instrument SOC | 0–100; value 0x7F = invalid (not ZE0 pack) |
 | d[6] | [1:0] | PRUN | 2-bit rolling counter |
@@ -251,7 +251,7 @@ Verified against every frame in ZE0 AC-charge captures.
 | d[2] | [7:4] | Regen/charge power limit bits [1:0] | Combined with d[1][5:0] |
 | d[2] | [3:0] | Max charger power bits [9:6] | Combined with d[3][7:2] |
 | d[3] | [7:2] | Max charger power bits [5:0] | Combined with d[2][3:0] |
-| d[3] | [1:0] | Charge power status | `LB_Charge_Power_Status` (DBC); 1 throughout the AC-charge capture. Decoded for the signal trace only |
+| d[3] | [1:0] | Charge power status | `LB_Charge_Power_Status` (DBC); `3` for ≈ 0.7 s after the LBC wakes, then `1` (AC-charge capture and this car). Not decoded |
 | d[7] | [7:0] | CRC-8 | See Section 1 |
 
 ### Field Decoding
@@ -365,7 +365,7 @@ Verified against every frame in ZE0 AC-charge captures.
 | d[4] | — | Not decoded | — |
 | d[5] | [7:0] | Power switch ON *(inferred)* | `0x60` while the power switch is ON, otherwise `0x00` |
 
-> **A charge wake is visible only in d[3].** During charging with the power switch OFF the frame stays `00 00 00 C0 00 00` (2,793 frames in the capture). Firmware that treats d[2] = 0 as "VCM asleep" stays silent through a charge wake. In OBCController the bypass states use d[2] (power switch), the VCM-authorised path uses d[3].
+> **A charge wake is visible only in d[3].** During charging with the power switch OFF the frame stays `00 00 00 C0 00 00` (2,793 frames in the capture). Firmware that treats d[2] = 0 as "VCM asleep" stays silent through a charge wake. OBCController uses d[2] only to tell that the power switch is ON (POWER_ON state) and d[3] for the VCM's wake / sleep state.
 
 > DLC is 6 on the 2011–12 ZE0. Minimum required DLC to decode: 4 bytes (d[0]–d[3]).
 

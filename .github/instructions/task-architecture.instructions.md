@@ -56,8 +56,7 @@ gptimer alarm (hardware)
   immediately if TX queue is full).
 - RECOMMENDED: alarm period = 100 000 µs. Use `gptimer_set_alarm_action()` with
   `alarm_cfg.auto_reload_on_alarm = true`.
-- `g_twai0_tx_enabled` follows `0x50B d[2]` (power switch ON) in the bypass build, written
-  by the RX dispatcher; in the auth build the state machine owns it. See
+- `g_twai0_tx_enabled` is owned by the state machine. See
   `twai-config.instructions.md` §TX-Enable Gate.
 
 ```c
@@ -234,8 +233,7 @@ static void state_machine_task(void *pvParams)
   Age each source with the task's own clock from its frame counter (`cnt_*`) and treat a
   stale source as absent; never block on the dispatcher.
 - REQUIRED: Timed actions (EVA pulse, announcement steps, contactor steps) are tick-counted
-  across cycles, never `vTaskDelay()`, on the VCM-authorised path. The bypass path keeps
-  its two 500 ms blocking contactor delays.
+  across cycles, never `vTaskDelay()`.
 - REQUIRED: Contactor outputs (`CONT_POS`, `CONT_NEG`) MUST be de-asserted immediately
   on detection of TWAI0 bus-off or PWM signal absence.
 - RECOMMENDED: 10 ms task cycle — fast enough to react to button press (ADC updates at
@@ -255,7 +253,7 @@ Every symbol in an ISR hot path MUST be in internal RAM:
 | `g_pwm_duty_us`, `g_pwm_period_us`, `g_pwm_signal_valid` | `DRAM_ATTR volatile` | Written from MCPWM ISR, read from task |
 | `g_adc_raw_avg` | `DRAM_ATTR volatile` | Written from ADC ISR, read from task |
 | TWAI error/bus-off flags | `DRAM_ATTR volatile` | Written from TWAI ISR, read from state machine |
-| `g_twai0_tx_enabled` | `DRAM_ATTR volatile` | Read from gptimer alarm ISR; written from the RX dispatcher (bypass build) or the state machine task (auth build) |
+| `g_twai0_tx_enabled` | `DRAM_ATTR volatile` | Read from gptimer alarm ISR; written by the state machine task |
 | `g_twai0_frame_lock`, private TX copies of 0x380 / 0x5BF | `DRAM_ATTR` | Taken / written inside the gptimer alarm ISR |
 
 `volatile` is REQUIRED on all variables shared between ISR writers and task readers to
