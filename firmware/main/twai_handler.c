@@ -61,6 +61,42 @@ static DRAM_ATTR twai_frame_t frame_6c1;
 /* ── ISR-safe log tag ────────────────────────────────────────────────────── */
 static DRAM_ATTR const char TWAI_ISR_TAG[] = "twai";
 
+/* ── Bus-error log rate limit ────────────────────────────────────────────────
+ * An unacknowledged frame is retried every ≈ 0.3 ms and each retry raises a bus error.
+ * One blocking ROM print per error (≈ 2 ms at 115200 baud) keeps this level-3 ISR busy
+ * back to back and starves every task, so each bus logs at most once per period with
+ * the number of errors and the OR of their flags since the previous line. */
+#define TWAI_ERR_LOG_PERIOD_MS  1000u
+
+typedef struct {
+    TickType_t last;
+    uint32_t   count;
+    uint32_t   flags;
+    bool       logged;
+} twai_err_log_t;
+
+static DRAM_ATTR twai_err_log_t s_twai0_err_log;
+static DRAM_ATTR twai_err_log_t s_twai1_err_log;
+
+static inline bool IRAM_ATTR twai_err_log_due(twai_err_log_t *s, uint32_t flags)
+{
+    TickType_t now = xTaskGetTickCountFromISR();
+    s->count++;
+    s->flags |= flags;
+    if (s->logged && (now - s->last) < pdMS_TO_TICKS(TWAI_ERR_LOG_PERIOD_MS)) {
+        return false;
+    }
+    s->last   = now;
+    s->logged = true;
+    return true;
+}
+
+static inline void IRAM_ATTR twai_err_log_reset(twai_err_log_t *s)
+{
+    s->count = 0;
+    s->flags = 0;
+}
+
 /* ── TWAI0 bus-off recovery task ─────────────────────────────────────────── */
 static TaskHandle_t s_twai0_recovery_task_hdl = NULL;
 
@@ -127,8 +163,11 @@ static bool IRAM_ATTR twai0_error_cb(twai_node_handle_t handle,
                                       void *user_ctx)
 {
     /* Skip log if arb_lost is the only flag — normal CAN bus event */
-    if (edata->err_flags.val != 0x1u) {
-        ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai0 err 0x%x", (unsigned int)edata->err_flags.val);
+    if (edata->err_flags.val != 0x1u &&
+        twai_err_log_due(&s_twai0_err_log, edata->err_flags.val)) {
+        ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai0 err 0x%x (%u since last report)",
+                      (unsigned int)s_twai0_err_log.flags, (unsigned int)s_twai0_err_log.count);
+        twai_err_log_reset(&s_twai0_err_log);
     }
     return false;
 }
@@ -170,7 +209,11 @@ static bool IRAM_ATTR twai1_error_cb(twai_node_handle_t handle,
                                       const twai_error_event_data_t *edata,
                                       void *user_ctx)
 {
-    ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai1 err 0x%x", (unsigned int)edata->err_flags.val);
+    if (twai_err_log_due(&s_twai1_err_log, edata->err_flags.val)) {
+        ESP_DRAM_LOGW(TWAI_ISR_TAG, "twai1 err 0x%x (%u since last report)",
+                      (unsigned int)s_twai1_err_log.flags, (unsigned int)s_twai1_err_log.count);
+        twai_err_log_reset(&s_twai1_err_log);
+    }
     return false;
 }
 

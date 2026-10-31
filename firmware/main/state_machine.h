@@ -69,11 +69,28 @@ typedef struct {
     /* 0x55B LBC SOC, placeholder 0x3FF filtered */
     volatile bool     soc_valid;
     volatile uint16_t soc_x10;         /* 0.1 % */
-    /* Lear (TWAI1): any frame = AC present; 0x617 DC output */
+    /* 0x1DB / 0x1DC LBC (10 ms) — signal trace only */
+    volatile uint32_t cnt_1db;
+    volatile int16_t  lbc_current_ha;  /* 0.5 A, + = discharging, - = charging */
+    volatile uint8_t  lbc_failsafe;    /* 0x1DB d[1] bits 2:0 */
+    volatile uint8_t  lbc_relay_cut;   /* 0x1DB d[1] bits 4:3 */
+    volatile bool     lbc_full;        /* 0x1DB d[3] bit 4, LB_Full_CHARGE_flag */
+    volatile bool     lbc_main_relay;  /* 0x1DB d[3] bit 5 */
+    volatile uint32_t cnt_1dc;
+    volatile uint8_t  lbc_chg_status;  /* 0x1DC d[3] bits 1:0, LB_Charge_Power_Status */
+    volatile uint16_t lbc_max_chgr_raw;/* 0x1DC LB_MAX_POWER_FOR_CHARGER, 0.1 kW */
+    /* Lear (TWAI1): any frame = Lear alive; 0x617 DC output; 0x616 control echo; 0x618 / 0x274 trace only */
     volatile uint32_t cnt_lear;
     volatile uint32_t cnt_617;
     volatile uint16_t lear_dc_dv;      /* 0.1 V */
     volatile uint16_t lear_dc_da;      /* 0.1 A */
+    volatile uint8_t  lear_aux_dv;     /* 0x617 d[4], 12 V auxiliary supply, 0.1 V */
+    volatile uint16_t lear_ac_raw;     /* 0x618 AC current, x 0.1 (scale unverified) */
+    volatile uint8_t  lear_temp_raw;   /* 0x274 d[6], deg C + 40 */
+    volatile uint32_t cnt_616;
+    volatile bool     lear_echo_en;
+    volatile uint16_t lear_echo_tv_dv; /* 0.1 V */
+    volatile uint16_t lear_echo_da;    /* 0.1 A */
 } sm_rx_status_t;
 
 extern sm_rx_status_t g_sm_rx;

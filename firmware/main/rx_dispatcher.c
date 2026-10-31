@@ -63,6 +63,20 @@ static void handle_1db(const uint8_t *data)
     if ((data[1] & 0x07u) != 0x00u) {    /* d[1][2:0] != 0b000 — failsafe active */
         g_sm_lbc_failsafe = true;
     }
+    g_sm_rx.lbc_current_ha = lbc1db_current_ha(data);
+    g_sm_rx.lbc_failsafe   = lbc1db_failsafe(data);
+    g_sm_rx.lbc_relay_cut  = lbc1db_relay_cut(data);
+    g_sm_rx.lbc_full       = lbc1db_full_charge(data);
+    g_sm_rx.lbc_main_relay = lbc1db_main_relay(data);
+    g_sm_rx.cnt_1db++;
+}
+
+/* ── 0x1DC — LBC Power Limits (signal trace only) ────────────────────────── */
+static void handle_1dc(const uint8_t *data)
+{
+    g_sm_rx.lbc_chg_status   = lbc1dc_charge_status(data);
+    g_sm_rx.lbc_max_chgr_raw = lbc1dc_max_charger_raw(data);
+    g_sm_rx.cnt_1dc++;
 }
 
 /* ── 0x1D4 — VCM Torque Request / Charge Status ──────────────────────────── */
@@ -133,8 +147,9 @@ static void handle_display_cmd(const can_rx_event_t *event)
     ESP_LOGW(TAG, "0x6C0 applied: %u V, %u %%", (unsigned)volts, (unsigned)soc);
 }
 
-/* ── TWAI1 RX frames — OBC alive signal ──────────────────────────────────── */
-/* The Lear broadcasts only while it has AC input, so any frame means AC present. */
+/* ── TWAI1 RX frames — Lear alive signal ─────────────────────────────────── */
+/* The Lear starts broadcasting only once it has AC input, but keeps broadcasting for tens
+ * of seconds after AC is removed; the state machine decides when a frame means AC present. */
 static void handle_twai1_frame(const can_rx_event_t *event)
 {
     g_sm_twai1_rxd = true;
@@ -142,7 +157,19 @@ static void handle_twai1_frame(const can_rx_event_t *event)
     if (event->id == 0x617u && event->dlc >= 4u) {
         g_sm_rx.lear_dc_dv = lear617_dc_dv(event->data);
         g_sm_rx.lear_dc_da = lear617_dc_da(event->data);
+        if (event->dlc >= 5u) {
+            g_sm_rx.lear_aux_dv = lear617_aux_dv(event->data);
+        }
         g_sm_rx.cnt_617++;
+    } else if (event->id == 0x616u && event->dlc >= 8u) {
+        g_sm_rx.lear_echo_en    = lear616_enable(event->data);
+        g_sm_rx.lear_echo_tv_dv = lear616_target_dv(event->data);
+        g_sm_rx.lear_echo_da    = lear616_ac_limit_da(event->data);
+        g_sm_rx.cnt_616++;
+    } else if (event->id == 0x618u && event->dlc >= 2u) {
+        g_sm_rx.lear_ac_raw = lear618_ac_raw(event->data);
+    } else if (event->id == 0x274u && event->dlc >= 7u) {
+        g_sm_rx.lear_temp_raw = lear274_master_temp_raw(event->data);
     }
 }
 
@@ -161,6 +188,7 @@ void dispatch_can_message(const can_rx_event_t *event)
         case 0x1F2u: handle_1f2(event->data); break;
         case 0x1DAu: handle_1da(event->data); break;
         case 0x1DBu: handle_1db(event->data); break;
+        case 0x1DCu: handle_1dc(event->data); break;
         case 0x1D4u: handle_1d4(event->data); break;
         case 0x55Bu: handle_55b(event->data); break;
         case 0x603u: /* fall-through */

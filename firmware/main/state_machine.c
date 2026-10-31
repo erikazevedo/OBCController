@@ -287,6 +287,8 @@ static struct {
     uint32_t    s2_open_ms;
     bool        pilot_set;      /* 0x5BF pilot reported: announcement complete */
     float       amps;           /* pilot latched just before State C */
+    bool        lear_stale;     /* Lear already broadcasting when State C was asserted (left over from the last session) */
+    uint32_t    ac_wait_ms;     /* State C asserted, AC not yet confirmed, for */
     bool        ac_reported;
     bool        ac_type_set;
     uint32_t    ac_ms;
@@ -502,6 +504,18 @@ static const char *vcm_req_name(uint8_t req)
     }
 }
 
+/* LBC flags that can make the VCM refuse or end a charge (0x1DB, 0x1DC), with the SOC */
+static void sm_trace_lbc(void)
+{
+    unsigned chgr = g_sm_rx.lbc_max_chgr_raw;
+    ESP_LOGI(TAG, "LBC full charge=%d main relay=%d failsafe=%u relay cut=%u | 0x1DC charge power status=%u, "
+                  "for-charger raw x0.1 = %u.%u | SOC %u.%u%%%s",
+             (int)g_sm_rx.lbc_full, (int)g_sm_rx.lbc_main_relay, (unsigned)g_sm_rx.lbc_failsafe,
+             (unsigned)g_sm_rx.lbc_relay_cut, (unsigned)g_sm_rx.lbc_chg_status, chgr / 10u, chgr % 10u,
+             (unsigned)(g_sm_rx.soc_x10 / 10u), (unsigned)(g_sm_rx.soc_x10 % 10u),
+             g_sm_rx.soc_valid ? "" : " (not valid)");
+}
+
 static void sm_trace(const sm_in_t *in, uint32_t dt)
 {
     static int      s_bus     = -1;
@@ -517,6 +531,8 @@ static void sm_trace(const sm_in_t *in, uint32_t dt)
     static uint32_t s_lear_ms = MS_MAX;
     static uint32_t s_beacon  = 0;
     static uint32_t s_beacon_ms = MS_MAX;
+    static uint32_t s_echo    = 0xFFFFFFFFu;
+    static uint16_t s_lbc     = 0xFFFFu;
 
     sat_add(&s_cmd_ms, dt);
     sat_add(&s_bus_ms, dt);
@@ -577,7 +593,7 @@ static void sm_trace(const sm_in_t *in, uint32_t dt)
         s_bus_ms = 0;
     }
     if ((int)in->lear_alive != s_lear) {
-        ESP_LOGI(TAG, "Lear %s", in->lear_alive ? "broadcasting (AC present)" : "silent");
+        ESP_LOGI(TAG, "Lear %s", in->lear_alive ? "broadcasting" : "silent");
         s_lear = in->lear_alive;
     }
     if (in->lear_alive && in->dc_fresh && s_lear_ms >= 10000u) {
@@ -585,6 +601,64 @@ static void sm_trace(const sm_in_t *in, uint32_t dt)
                  (unsigned)(in->dc_da / 10u), (unsigned)(in->dc_da % 10u));
         s_lear_ms = 0;
     }
+    if (g_sm_rx.cnt_616 != 0u) {
+        uint32_t e = ((uint32_t)g_sm_rx.lear_echo_en << 31) | ((uint32_t)g_sm_rx.lear_echo_tv_dv << 16) |
+                     g_sm_rx.lear_echo_da;
+        if (e != s_echo) {
+            ESP_LOGI(TAG, "Lear 0x616 echo: enable=%d target %u.%u V AC limit %u.%u A", (int)g_sm_rx.lear_echo_en,
+                     (unsigned)(g_sm_rx.lear_echo_tv_dv / 10u), (unsigned)(g_sm_rx.lear_echo_tv_dv % 10u),
+                     (unsigned)(g_sm_rx.lear_echo_da / 10u), (unsigned)(g_sm_rx.lear_echo_da % 10u));
+            s_echo = e;
+        }
+    }
+    if (g_sm_rx.cnt_1db != 0u) {
+        uint16_t lbc = (uint16_t)(g_sm_rx.lbc_full | (g_sm_rx.lbc_main_relay << 1) | (g_sm_rx.lbc_failsafe << 2) |
+                                  (g_sm_rx.lbc_relay_cut << 5) | (g_sm_rx.lbc_chg_status << 7));
+        if (lbc != s_lbc) {
+            sm_trace_lbc();
+            s_lbc = lbc;
+        }
+    }
+}
+
+/* Charge-start window: LBC / Lear / VCM every SM_TRACE_STEP_MS after the charge contactors close */
+static uint32_t s_win_ms   = MS_MAX;
+static uint32_t s_win_next = 0;
+
+static void sm_trace_window_start(void)
+{
+    if (SM_LOG_VCM_TRACE) {
+        s_win_ms   = 0;
+        s_win_next = 0;
+        sm_trace_lbc();
+    }
+}
+
+static void sm_trace_window(const sm_in_t *in, uint32_t dt)
+{
+    if (s_win_ms >= SM_TRACE_WINDOW_MS) {
+        return;
+    }
+    if (s_win_ms >= s_win_next) {
+        int      lbc_da = g_sm_rx.lbc_current_ha * 5;   /* 0.1 A, + = discharging */
+        unsigned lbc_ab = (unsigned)(lbc_da < 0 ? -lbc_da : lbc_da);
+        uint16_t out    = obc380_get_output_power(frame_380_data);
+        unsigned pil_da = (unsigned)(in->pilot_a * 10.0f);
+        ESP_LOGI(TAG, "chg +%u ms: LBC %s%u.%u A | Lear %u.%u V %u.%u A (%u ms old) 12V %u.%u AC %u.%u %dC | "
+                      "pilot %u.%u A | reported %u.%u kW %u A | VCM d0=%02X mode=%u cmd %u W",
+                 (unsigned)s_win_ms, lbc_da < 0 ? "-" : "+", lbc_ab / 10u, lbc_ab % 10u,
+                 (unsigned)(in->dc_dv / 10u), (unsigned)(in->dc_dv % 10u),
+                 (unsigned)(in->dc_da / 10u), (unsigned)(in->dc_da % 10u),
+                 (unsigned)(s_age_617.age_ms > 9999u ? 9999u : s_age_617.age_ms),
+                 (unsigned)(g_sm_rx.lear_aux_dv / 10u), (unsigned)(g_sm_rx.lear_aux_dv % 10u),
+                 (unsigned)(g_sm_rx.lear_ac_raw / 10u), (unsigned)(g_sm_rx.lear_ac_raw % 10u),
+                 (int)g_sm_rx.lear_temp_raw - 40,
+                 pil_da / 10u, pil_da % 10u,
+                 (unsigned)(out / 10u), (unsigned)(out % 10u), (unsigned)(frame_5bf_data[6] >> 3),
+                 (unsigned)g_sm_rx.d0_1f2, (unsigned)g_sm_rx.mode_1f2, (unsigned)in->power_cmd_w);
+        s_win_next += SM_TRACE_STEP_MS;
+    }
+    sat_add(&s_win_ms, dt);
 }
 
 /* ── Frame helpers for the auth path ─────────────────────────────────────── */
@@ -666,15 +740,40 @@ static void sm_auth_sync_switch_bits(const sm_in_t *in)
     frame_380_data[2] = d2;
 }
 
-/* AC voltage / type are reported once the Lear broadcasts after State C; cleared 400 ms after release */
+/* AC is at the Lear once it broadcasts after State C.  A Lear already broadcasting at State C is
+ * left over from the last session and drops off TWAI1 while AC returns, so 0x050 sent then is never
+ * acknowledged: only its frames from SM_LEAR_AC_SETTLE_MS after State C count. */
+static bool sm_auth_lear_has_ac(const sm_in_t *in)
+{
+    if (!in->lear_alive) {
+        return false;
+    }
+    if (!s_auth.lear_stale) {
+        return true;
+    }
+    return s_auth.ac_wait_ms >= SM_LEAR_AC_SETTLE_MS &&
+           s_age_lear.age_ms < s_auth.ac_wait_ms - SM_LEAR_AC_SETTLE_MS;
+}
+
+/* AC confirmed this State C (Lear held off) and the Lear still broadcasting */
+static bool sm_auth_ac_present(const sm_in_t *in)
+{
+    return s_auth.ac_reported && in->lear_alive;
+}
+
+/* AC voltage / type are reported once AC is confirmed at the Lear after State C; cleared 400 ms after release */
 static void sm_auth_ac_monitor(const sm_in_t *in, uint32_t dt)
 {
     if (s_auth.s2_closed) {
-        if (!s_auth.ac_reported && in->lear_alive) {
+        if (!s_auth.ac_reported) {
+            sat_add(&s_auth.ac_wait_ms, dt);
+        }
+        if (!s_auth.ac_reported && sm_auth_lear_has_ac(in)) {
             FRAMES_LOCK();
             obc380_set_ac_raw(frame_380_data, obc380_ac_raw_from_volts(SM_EVSE_AC_NOMINAL_V));
             frame_5bf_data[1] = OBC5BF_D1_AC_PRESENT;
             FRAMES_UNLOCK();
+            ESP_LOGI(TAG, "SM: AC at the Lear %u ms after State C", (unsigned)s_auth.ac_wait_ms);
             s_auth.ac_reported = true;
             s_auth.ac_ms       = 0;
             if (!s_auth.pos_closed) {
@@ -1024,9 +1123,15 @@ static void sm_auth_announce(const sm_in_t *in, uint32_t dt)
             frame_380_data[4] |= OBC380_D4_S2;
             obc380_set_chargeable(frame_380_data, sm_auth_chargeable_raw());
             FRAMES_UNLOCK();
-            s_auth.s2_closed = true;
-            s_auth.s2_ms     = 0;
+            s_auth.s2_closed  = true;
+            s_auth.s2_ms      = 0;
+            s_auth.lear_stale = in->lear_alive;
+            s_auth.ac_wait_ms = 0;
             ESP_LOGI(TAG, "SM: EVSE announced, State C asserted (pilot %.1f A)", s_auth.amps);
+            if (s_auth.lear_stale) {
+                ESP_LOGI(TAG, "SM: Lear still broadcasting from the last session — AC counts from +%u ms",
+                         (unsigned)SM_LEAR_AC_SETTLE_MS);
+            }
         }
     } else if (!s_auth.pilot_set) {
         sat_add(&s_auth.s2_ms, dt);
@@ -1144,7 +1249,7 @@ static sm_state_t sm_auth_start(const sm_in_t *in, uint32_t dt)
         if (s_auth.st_ms >= SM_HV_LIVE_TIMEOUT_MS && !(in->hv_live && in->relay_plus)) {
             return sm_auth_begin_stop(me, STOP_FAULT, false, "HV bus not live (0x1D4)");
         }
-        if (s_auth.st_ms >= SM_LEAR_AC_TIMEOUT_MS && !in->lear_alive) {
+        if (s_auth.st_ms >= SM_LEAR_AC_TIMEOUT_MS && !sm_auth_ac_present(in)) {
             return sm_auth_begin_stop(me, STOP_FAULT, false, "no AC at the Lear");
         }
     } else if (s_auth.contactors && in->d4_fresh && !in->hv_live) {
@@ -1152,8 +1257,8 @@ static sm_state_t sm_auth_start(const sm_in_t *in, uint32_t dt)
     }
 
     switch (s_auth.sub) {
-    case 0:     /* VCM main relays closed and HV bus live; AC at the Lear */
-        if (in->hv_live && in->relay_plus && in->lear_alive) {
+    case 0:     /* VCM main relays closed and HV bus live; AC at the Lear and the Lear held off */
+        if (in->hv_live && in->relay_plus && sm_auth_ac_present(in)) {
             sm_auth_sub(1);
         }
         break;
@@ -1173,6 +1278,7 @@ static sm_state_t sm_auth_start(const sm_in_t *in, uint32_t dt)
             frame_5bf_data[4]  = OBC5BF_ST_RELAY_CLOSED;
             FRAMES_UNLOCK();
             ESP_LOGI(TAG, "SM: charge contactors closed (HV bus %u V)", (unsigned)(in->bus_dv / 10u));
+            sm_trace_window_start();
             sm_auth_sub(3);
         }
         break;
@@ -1665,6 +1771,9 @@ void state_machine_task(void *pvParams)
             s_auth.sub    = 0;
             s_auth.sub_ms = 0;
             prev_state    = state;
+        }
+        if (SM_LOG_VCM_TRACE) {
+            sm_trace_window(&in, dt);
         }
 
         /* Auth build: the SM owns the TWAI0 TX gate.  As the OBC under VCM control it

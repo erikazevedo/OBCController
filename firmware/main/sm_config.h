@@ -23,7 +23,7 @@
  *       (0x50B d[2] != 0) → the bypass path above, unchanged.
  */
 #ifndef SM_SKIP_VCM_AUTH
-#define SM_SKIP_VCM_AUTH           1
+#define SM_SKIP_VCM_AUTH           0
 #endif
 
 /** Drive GPIO_PLUG_SIG (OBC pin 21, combination-meter plug indicator) while a plug is present. 0 = never drive it. */
@@ -38,7 +38,7 @@
 #define SM_ADC_BUTTON_MV           700
 
 /** Startup default for Lear OBC DC target voltage (V). Adjustable at runtime via CAN 0x6C0. */
-#define SM_LEAR_TARGET_VOLTAGE_V   392
+#define SM_LEAR_TARGET_VOLTAGE_V   400
 
 /** Accepted range for target voltage received on 0x6C0 (V). */
 #define SM_TARGET_VOLTAGE_MIN_V    300
@@ -93,6 +93,11 @@
 /** Lear considered alive while a TWAI1 frame arrived within (ms); the Lear broadcasts at ~1 Hz. */
 #define SM_LEAR_ALIVE_MS           2500
 
+/** The Lear keeps broadcasting for tens of seconds after AC is removed, then leaves TWAI1 while AC
+ *  returns.  If it is still broadcasting when State C is asserted, only a frame received this long
+ *  after State C means AC is present (ms).  A cold Lear first broadcasts ≈ 1.4–1.6 s after State C. */
+#define SM_LEAR_AC_SETTLE_MS       2500
+
 /** Delay between HV live (0x1D4) and closing the charge contactors (ms). Stock OBC: ~0.8 s. */
 #define SM_HV_SETTLE_MS            700
 
@@ -137,7 +142,12 @@
 #define SM_AC_TYPE_MASK            ((SM_EVSE_AC_NOMINAL_V) < 180 ? 0x08u : 0x10u)
 #endif
 
-/** 1 = log VCM / LBC / Lear signal changes (0x50B, 0x1F2 incl. VCM MODE, 0x1D4, 0x1DA, Lear) at INFO level. */
+/** 1 = log VCM / LBC / Lear signal changes (0x50B, 0x1F2 incl. VCM MODE, 0x1D4, 0x1DA, 0x1DB/0x1DC, Lear) at INFO level. */
 #ifndef SM_LOG_VCM_TRACE
 #define SM_LOG_VCM_TRACE           1
 #endif
+
+/** Signal trace: after the charge contactors close, log LBC / Lear / VCM every SM_TRACE_STEP_MS for SM_TRACE_WINDOW_MS (ms).
+ *  Covers the VCM's mode-130 entry and its accept / stop decision ≈ 2 s later. */
+#define SM_TRACE_WINDOW_MS         5000
+#define SM_TRACE_STEP_MS           250

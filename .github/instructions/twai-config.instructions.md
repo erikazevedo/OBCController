@@ -149,7 +149,11 @@ Register an `on_state_change` callback. On transition to `TWAI_ERROR_BUS_OFF`:
 2. Set a `DRAM_ATTR volatile` flag visible to the state machine task.
 3. The state machine task MUST treat TWAI0 bus-off as a high-priority fault condition.
 
-Register an `on_error` callback to log `twai_error_flags_t` fields at `ESP_LOG_WARN`.
+Register an `on_error` callback to log `twai_error_flags_t` fields at `ESP_LOG_WARN`,
+**rate-limited** to one line per bus per `TWAI_ERR_LOG_PERIOD_MS` (1 s) carrying the error
+count and the OR of the flags since the previous line. An unacknowledged frame is retried
+every ≈ 0.3 ms and each retry raises a bus error; one blocking `ESP_DRAM_LOGW` (≈ 2 ms at
+115200 baud) per error keeps the level-3 ISR running back to back and starves every task.
 
 ---
 

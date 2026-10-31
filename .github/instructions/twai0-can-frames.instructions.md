@@ -197,6 +197,7 @@ Verified against every frame in ZE0 AC-charge captures.
 | d[2] | [7:0] | Battery voltage bits [9:2] | Combined with d[3][7:6] to form 10-bit unsigned value |
 | d[3] | [7:6] | Battery voltage bits [1:0] | Combined with d[2] |
 | d[3] | [5] | Main relay on flag | 1 = main relay on (LB_MainRelayOn) |
+| d[3] | [4] | Full charge flag | `LB_Full_CHARGE_flag` (DBC); 0 throughout the AC-charge capture (SOC 74.5 %). Decoded for the signal trace only |
 | d[3] | [3] | HV interlock | 1 = interlock chain closed (required before relay-on is granted) |
 | d[4] | [6:0] | Instrument SOC | 0–100; value 0x7F = invalid (not ZE0 pack) |
 | d[6] | [1:0] | PRUN | 2-bit rolling counter |
@@ -250,6 +251,7 @@ Verified against every frame in ZE0 AC-charge captures.
 | d[2] | [7:4] | Regen/charge power limit bits [1:0] | Combined with d[1][5:0] |
 | d[2] | [3:0] | Max charger power bits [9:6] | Combined with d[3][7:2] |
 | d[3] | [7:2] | Max charger power bits [5:0] | Combined with d[2][3:0] |
+| d[3] | [1:0] | Charge power status | `LB_Charge_Power_Status` (DBC); 1 throughout the AC-charge capture. Decoded for the signal trace only |
 | d[7] | [7:0] | CRC-8 | See Section 1 |
 
 ### Field Decoding
