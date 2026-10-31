@@ -5,7 +5,7 @@
  * state_machine.c.                                                            */
 
 /** Startup default for target SOC at which a charging session is terminated (%). Adjustable at runtime via CAN 0x6C0. */
-#define SM_SOC_CUTOFF_PCT          80.0f
+#define SM_SOC_CUTOFF_PCT          90.0f
 
 /** SOC hysteresis for restarting a charging session (%). */
 #define SM_SOC_RESTART_HYST       2.0f

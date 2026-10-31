@@ -105,11 +105,17 @@ static void handle_display_cmd(const can_rx_event_t *event)
 {
     const uint8_t *d = event->data;
 
+    /* TEMP diagnostic: logged at WARN because the default log level is WARN */
+    ESP_LOGW(TAG, "0x6C0 rx dlc=%u %02X %02X %02X %02X %02X %02X %02X %02X",
+             (unsigned)event->dlc, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+
     if (event->dlc != 8u || d[7] != display_frame_csum(d)) {
+        ESP_LOGW(TAG, "0x6C0 rejected: bad dlc/csum (expected csum %02X)", display_frame_csum(d));
         return;
     }
     for (int i = 2; i < 7; i++) {
         if (d[i] != 0u) {
+            ESP_LOGW(TAG, "0x6C0 rejected: reserved byte d[%d] != 0", i);
             return;
         }
     }
@@ -118,11 +124,13 @@ static void handle_display_cmd(const can_rx_event_t *event)
     uint8_t  soc   = d[1];
     if (volts < SM_TARGET_VOLTAGE_MIN_V || volts > SM_TARGET_VOLTAGE_MAX_V ||
         soc   < SM_TARGET_SOC_MIN_PCT   || soc   > SM_TARGET_SOC_MAX_PCT) {
+        ESP_LOGW(TAG, "0x6C0 rejected: out of range (%u V, %u %%)", (unsigned)volts, (unsigned)soc);
         return;
     }
 
     g_sm_target_voltage_v = volts;
     g_sm_target_soc_pct   = soc;
+    ESP_LOGW(TAG, "0x6C0 applied: %u V, %u %%", (unsigned)volts, (unsigned)soc);
 }
 
 /* ── TWAI1 RX frames — OBC alive signal ──────────────────────────────────── */
