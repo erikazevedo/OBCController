@@ -76,15 +76,15 @@
 #define SM_HV_LIVE_TIMEOUT_MS      5000
 
 /** After the normal-charge request: AC must be confirmed at the Lear within (ms). */
-#define SM_LEAR_AC_TIMEOUT_MS      8000
+#define SM_LEAR_AC_TIMEOUT_MS      20000
 
 /** Lear considered alive while a TWAI1 frame arrived within (ms); the Lear broadcasts at ~1 Hz. */
 #define SM_LEAR_ALIVE_MS           2500
 
-/** The Lear broadcasts whenever it is powered: in a charge wake from ≈ 1.2–1.7 s after State C, and for
- *  ≈ 6–25 s after the VCM sleeps.  A Lear still broadcasting when the VCM wakes again drops off TWAI1 for
- *  ≈ 3.5–4 s, so if it is broadcasting when State C is asserted only a frame received this long after
- *  State C means AC is present (ms). */
+/** The Lear broadcasts whenever it is powered, also without AC: in a charge wake from ≈ 1.2–2.2 s after State C,
+ *  and for ≈ 6–25 s after the VCM sleeps.  A Lear still broadcasting when the VCM wakes again drops off TWAI1 for
+ *  ≈ 3.5–4 s, so if it is broadcasting when State C is asserted only an AC voltage reading (0x27D) received this
+ *  long after State C counts (ms). */
 #define SM_LEAR_AC_SETTLE_MS       2500
 
 /** Delay between HV live (0x1D4) and closing the charge contactors (ms). Stock OBC: ~0.8 s. */
@@ -125,17 +125,27 @@
  *  TWAI0 retries an unacknowledged frame forever, so the bridge must never transmit to an empty bus. */
 #define SM_TX_VCM_FRESH_MS         100
 
-/** Nominal EVSE AC voltage (V): reported in 0x380 and used to convert the VCM kW command to Lear AC amps. */
-#ifndef SM_EVSE_AC_NOMINAL_V
-#define SM_EVSE_AC_NOMINAL_V       120
-#endif
+/** AC counts as present at the Lear only while its AC input voltage (0x27D) has read at least this within
+ *  SM_LEAR_ALIVE_MS (V).  That reading is reported in 0x380 and converts the VCM kW command to Lear AC amps.
+ *  Without AC it reads 0, with blips of up to 13.5 V when the charge contactors switch; a 120 V supply reads
+ *  113–125 V. */
+#define SM_AC_PRESENT_MIN_V        90
 
-/** 0x380 d[0] AC-input-type bit: 0x08 = 100 V class (inferred), 0x10 = 200 V class (seen in the capture). */
-#ifndef SM_AC_TYPE_MASK
-#define SM_AC_TYPE_MASK            ((SM_EVSE_AC_NOMINAL_V) < 180 ? 0x08u : 0x10u)
-#endif
+/** 0x380 d[0] AC-input-type bit from the measured AC voltage: 0x10 = 200 V class (seen in the capture) at or
+ *  above this, else 0x08 = 100 V class (inferred).  Midway between 127 V + 10 % and 200 V − 10 % (V). */
+#define SM_AC_200V_CLASS_MIN_V     160
 
 /** 1 = log VCM / LBC / Lear signal changes (0x50B, 0x1F2 incl. VCM MODE, 0x1D4, 0x1DA, Lear) at INFO level. */
 #ifndef SM_LOG_VCM_TRACE
 #define SM_LOG_VCM_TRACE           1
 #endif
+
+/** 1 = capture every Lear (TWAI1) frame, all IDs, and log each payload change at INFO level with the bits that
+ *  changed.  For finding undocumented signals such as the AC input voltage: compare a 120 V and a 240 V session.
+ *  Extra IDs are only logged, they never reach the state machine. */
+#ifndef SM_LOG_LEAR_RAW
+#define SM_LOG_LEAR_RAW            0
+#endif
+
+/** Minimum time between two raw-capture lines for the same Lear ID (ms); changes in between are ORed into the next line. */
+#define SM_LOG_LEAR_RAW_MIN_MS     1000

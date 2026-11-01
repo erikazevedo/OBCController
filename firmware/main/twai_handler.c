@@ -2,6 +2,7 @@
 #include "state_machine.h"
 #include "gpio_config.h"
 #include "obc_frames.h"
+#include "sm_config.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -118,8 +119,12 @@ static inline bool IRAM_ATTR twai0_id_accepted(uint32_t id)
 
 static inline bool IRAM_ATTR twai1_id_accepted(uint32_t id)
 {
-    return (id == 0x274u || id == 0x616u || id == 0x617u || id == 0x618u);
+    return SM_LOG_LEAR_RAW || TWAI1_ID_IS_CORE(id);
 }
+
+/* Raw-capture frames (non-core IDs) are best effort: they are dropped while the shared queue is this full,
+ * so an unexpectedly chatty Lear ID can never crowd out the TWAI0 frames the state machine needs. */
+#define TWAI1_RAW_QUEUE_LIMIT   8u
 
 /* ── TWAI0 ISR callbacks ─────────────────────────────────────────────────── */
 static bool IRAM_ATTR twai0_rx_done_cb(twai_node_handle_t handle,
@@ -183,6 +188,9 @@ static bool IRAM_ATTR twai1_rx_done_cb(twai_node_handle_t handle,
         return false;
     }
     if (!twai1_id_accepted(frame.header.id)) {
+        return false;
+    }
+    if (!TWAI1_ID_IS_CORE(frame.header.id) && uxQueueMessagesWaitingFromISR(rx_queue) >= TWAI1_RAW_QUEUE_LIMIT) {
         return false;
     }
     can_rx_event_t evt = { .bus = handle, .id = frame.header.id,
@@ -311,8 +319,10 @@ void twai_handler_init(void)
     };
     ESP_ERROR_CHECK(twai_new_node_onchip(&twai1_cfg, &twai1_hdl));
 
-    twai_mask_filter_config_t twai1_filter =
-        twai_make_dual_filter(0x274, 0x7FF, 0x610, 0x7F0, false);
+    /* Raw capture accepts every ID (mask 0 = don't care); otherwise only 0x270–0x27F and 0x610–0x61F */
+    twai_mask_filter_config_t twai1_filter = SM_LOG_LEAR_RAW
+        ? twai_make_dual_filter(0x000, 0x000, 0x000, 0x000, false)
+        : twai_make_dual_filter(0x270, 0x7F0, 0x610, 0x7F0, false);
     ESP_ERROR_CHECK(twai_node_config_mask_filter(twai1_hdl, 0, &twai1_filter));
 
     twai_event_callbacks_t twai1_cbs = {

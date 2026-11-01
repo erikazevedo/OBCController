@@ -2,7 +2,7 @@
 /*
  * Pure encode/decode helpers for the Nissan LEAF ZE0 EV-CAN frames the bridge
  * transmits (0x380, 0x5BF) or decodes (0x1F2, 0x1D4, 0x50B, 0x1DA) and for the
- * Lear charger frames on TWAI1 (0x050, 0x617).
+ * Lear charger frames on TWAI1 (0x050, 0x27D, 0x617).
  *
  * Header-only with no ESP-IDF dependencies so the same code can be checked on a
  * host against real captures.  Every helper is force-inlined because the
@@ -72,10 +72,11 @@ OBC_INLINE uint16_t obc380_get_ac_raw(const uint8_t *d)
     return (uint16_t)(((d[5] & 0x07u) << 6) | (d[6] >> 2));
 }
 
-OBC_INLINE uint16_t obc380_ac_raw_from_volts(uint16_t volts)
+/* AC voltage in 0.1 V to the 0x380 raw value: 0.5 V steps above 70 V, 0 (no AC) at or below 70 V. */
+OBC_INLINE uint16_t obc380_ac_raw_from_dv(uint16_t dv)
 {
-    if (volts <= 70u) return 0u;
-    uint32_t raw = (uint32_t)(volts - 70u) * 2u;
+    if (dv <= 700u) return 0u;
+    uint32_t raw = ((uint32_t)dv - 700u) / 5u;
     return (uint16_t)(raw > 511u ? 511u : raw);
 }
 
@@ -192,6 +193,14 @@ OBC_INLINE uint16_t inv1da_bus_dv(const uint8_t *d)
 /* ── Lear charger (TWAI1) ──────────────────────────────────────────────────── */
 OBC_INLINE uint16_t lear617_dc_dv(const uint8_t *d) { return (uint16_t)(((uint16_t)d[0] << 8) | d[1]); }
 OBC_INLINE uint16_t lear617_dc_da(const uint8_t *d) { return (uint16_t)(((uint16_t)d[2] << 8) | d[3]); }
+
+/* 0x27D: AC input voltage, big-endian d[0..1] / 32 V (0.5 V steps, low nibble always 0), returned in 0.1 V.
+ * Not in the DBC; identified from 120 V and 240 V sessions (twai1-can-frames.instructions.md). */
+OBC_INLINE uint16_t lear27d_ac_dv(const uint8_t *d)
+{
+    uint32_t raw = ((uint32_t)d[0] << 8) | d[1];
+    return (uint16_t)((raw * 10u) / 32u);
+}
 
 /* 0x050 Lear_Control: AC current limit in 0.1 A, big-endian d[5..6]. */
 OBC_INLINE void lear050_set_ac_limit(uint8_t *d, uint16_t deci_amps)

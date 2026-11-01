@@ -175,18 +175,25 @@ Identical to TWAI0 config except pin assignments. Same `tx_queue_depth`, `fail_r
 ### Acceptance Filter — REQUIRED
 
 ```c
-// Filter 1: exact match for 0x274  (mask 0x7FF = all bits must match)
+// Filter 1: covers 0x270–0x27F
+//   Target IDs in this range: 0x274, 0x27D (AC input voltage)
 // Filter 2: covers 0x610–0x61F
 //   Target IDs in this range: 0x616, 0x617, 0x618
 twai_mask_filter_config_t twai1_filter =
-    twai_make_dual_filter(0x274, 0x7FF,
+    twai_make_dual_filter(0x270, 0x7F0,
                           0x610, 0x7F0,
                           false);
 ESP_ERROR_CHECK(twai_node_config_mask_filter(twai1_hdl, 0, &twai1_filter));
 ```
 
 **REQUIRED: software rejection** inside `on_rx_done` — accept only
-`{0x274, 0x616, 0x617, 0x618}`, drop everything else.
+`{0x274, 0x27D, 0x616, 0x617, 0x618}` (`TWAI1_ID_IS_CORE()`), drop everything else.
+
+**Raw capture (`SM_LOG_LEAR_RAW 1`, default).** To find undocumented Lear signals the hardware filter is
+opened (`twai_make_dual_filter(0, 0, 0, 0, false)`, mask 0 = don't care) and the software rejection accepts
+every ID. Frames outside the five core IDs (`TWAI1_ID_IS_CORE()`) are best effort: the ISR drops them while
+`rx_queue` holds `TWAI1_RAW_QUEUE_LIMIT` events or more, and the RX dispatcher only logs them — they never
+count as "Lear alive". With `SM_LOG_LEAR_RAW 0` the filter and rejection above apply unchanged.
 
 ### TX Frame
 

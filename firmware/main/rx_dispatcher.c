@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 
 static const char *TAG = "rx_disp";
+static const char *TAG_LEAR = "lear";
 
 TaskHandle_t rx_dispatcher_task_hdl = NULL;
 
@@ -112,16 +113,116 @@ static void handle_display_cmd(const can_rx_event_t *event)
     ESP_LOGW(TAG, "0x6C0 applied: %u V, %u %%", (unsigned)volts, (unsigned)soc);
 }
 
-/* ── TWAI1 RX frames — Lear alive signal ─────────────────────────────────── */
+/* ── TWAI1 raw capture (SM_LOG_LEAR_RAW) ─────────────────────────────────── */
+/* One INFO line per Lear ID whenever its payload changed, at most one per SM_LOG_LEAR_RAW_MIN_MS.  "chg" is
+ * the OR of the bits that flipped between consecutive frames since the previous line, so a counter or
+ * checksum shows up as busy bits and a signal that follows the AC voltage as bits that differ only
+ * between a 120 V and a 240 V session. */
+#define LEAR_RAW_MAX_IDS   16
+
+typedef struct {
+    uint32_t   id;
+    bool       used;
+    bool       logged;
+    bool       pending;
+    uint8_t    dlc;
+    uint8_t    last[8];
+    uint8_t    chg[8];
+    TickType_t last_log;
+} lear_raw_t;
+
+static void hex8(char *out, const uint8_t *d)
+{
+    static const char k_hex[] = "0123456789ABCDEF";
+    for (int i = 0; i < 8; i++) {
+        out[i * 3]     = k_hex[d[i] >> 4];
+        out[i * 3 + 1] = k_hex[d[i] & 0x0Fu];
+        out[i * 3 + 2] = (i < 7) ? ' ' : '\0';
+    }
+}
+
+static void log_lear_raw(const can_rx_event_t *event)
+{
+    static lear_raw_t s_raw[LEAR_RAW_MAX_IDS];
+    static bool       s_full_warned;
+
+    lear_raw_t *r = NULL;
+    for (int i = 0; i < LEAR_RAW_MAX_IDS; i++) {
+        if (s_raw[i].used && s_raw[i].id == event->id) {
+            r = &s_raw[i];
+            break;
+        }
+        if (!s_raw[i].used) {
+            r          = &s_raw[i];
+            r->used    = true;
+            r->id      = event->id;
+            r->dlc     = event->dlc;
+            r->pending = true;
+            break;
+        }
+    }
+    if (r == NULL) {
+        if (!s_full_warned) {
+            ESP_LOGW(TAG_LEAR, "raw capture: more than %d IDs, ignoring 0x%03X", LEAR_RAW_MAX_IDS, (unsigned)event->id);
+            s_full_warned = true;
+        }
+        return;
+    }
+
+    if (r->dlc != event->dlc) {
+        r->dlc     = event->dlc;
+        r->pending = true;
+    }
+    for (int i = 0; i < 8; i++) {
+        uint8_t flipped = (uint8_t)(r->last[i] ^ event->data[i]);
+        if (flipped != 0u && r->logged) {
+            r->chg[i] |= flipped;
+            r->pending = true;
+        }
+        r->last[i] = event->data[i];
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    if (!r->pending || (r->logged && (now - r->last_log) < pdMS_TO_TICKS(SM_LOG_LEAR_RAW_MIN_MS))) {
+        return;
+    }
+
+    char data[8 * 3], chg[8 * 3];
+    hex8(data, r->last);
+    hex8(chg, r->chg);
+    if (r->logged) {
+        ESP_LOGI(TAG_LEAR, "0x%03X dlc=%u data %s chg %s", (unsigned)r->id, (unsigned)r->dlc, data, chg);
+    } else {
+        ESP_LOGI(TAG_LEAR, "0x%03X dlc=%u data %s (first frame)", (unsigned)r->id, (unsigned)r->dlc, data);
+    }
+    for (int i = 0; i < 8; i++) {
+        r->chg[i] = 0;
+    }
+    r->pending  = false;
+    r->logged   = true;
+    r->last_log = now;
+}
+
+/* ── TWAI1 RX frames — Lear alive signal, DC output, AC input voltage ────── */
 /* The Lear broadcasts whenever it is powered (also with the car ON and no plug) and for a while
- * after a session, so a frame alone does not mean AC; the state machine decides that. */
+ * after a session, so a frame alone does not mean AC; the state machine decides that from the
+ * 0x27D AC input voltage.  IDs outside the core set (raw capture only) are logged and never counted. */
 static void handle_twai1_frame(const can_rx_event_t *event)
 {
-    g_sm_rx.cnt_lear++;
-    if (event->id == 0x617u && event->dlc >= 4u) {
-        g_sm_rx.lear_dc_dv = lear617_dc_dv(event->data);
-        g_sm_rx.lear_dc_da = lear617_dc_da(event->data);
-        g_sm_rx.cnt_617++;
+    if (TWAI1_ID_IS_CORE(event->id)) {
+        g_sm_rx.cnt_lear++;
+        if (event->id == 0x617u && event->dlc >= 4u) {
+            g_sm_rx.lear_dc_dv = lear617_dc_dv(event->data);
+            g_sm_rx.lear_dc_da = lear617_dc_da(event->data);
+            g_sm_rx.cnt_617++;
+        }
+        if (event->id == 0x27Du && event->dlc >= 2u) {
+            g_sm_rx.lear_ac_dv = lear27d_ac_dv(event->data);
+            g_sm_rx.cnt_27d++;
+        }
+    }
+    if (SM_LOG_LEAR_RAW) {
+        log_lear_raw(event);
     }
 }
 

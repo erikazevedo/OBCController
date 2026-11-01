@@ -1,0 +1,189 @@
+ binary image header(2048k). Using the size in the binary image header.
+I (441) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (447) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (462) main_task: Started on CPU0
+I (464) main_task: Calling app_main()
+E (471) esp_twai: _node_queue_tx(580): node is bus off
+W (472) twai: twai1 0x050 TX dropped
+I (476) sm: VCM EV-CAN silent
+I (478) sm: Lear silent
+I (481) main_task: Returned from app_main()
+I (17756) sm: SM: SLEEP -> VCM_WAKE (activation pulse, attempt 1/3, pilot 32.0 A)
+I (17836) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=1 (start-up)
+I (17836) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+I (17836) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=0 d6=40
+I (17866) sm: VCM EV-CAN active
+I (17866) sm: VCM 0x50B d2=00 d3=C0 (WakeUp, power switch OFF)
+I (17866) sm: SM: VCM_WAKE -> VCM_AUTH (VCM awake)
+I (17886) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=2 (start-up)
+I (17936) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=4 (start-up)
+I (17976) sm: VCM 0x1D4 HV live=0 relay+=0 charge session=1 d6=E0
+I (18066) sm: SM: EVSE announced, State C asserted (pilot 32.0 A)
+I (18146) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=5 (start-up)
+I (18146) sm: HV bus 2 V (0x1DA)
+I (18156) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=7 (start-up)
+I (18206) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=109 (entering charge)
+I (18216) sm: VCM 0x1F2 d0=08 d2=00 req=none mode=110 (entering charge)
+I (18226) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=113 (entering charge)
+I (18226) sm: VCM 0x1D4 HV live=0 relay+=1 charge session=1 d6=E0
+I (18227) sm: SM: VCM_AUTH -> AUTH_START (normal charge request)
+I (18376) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=114 (entering charge)
+I (18406) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=115 (entering charge)
+I (18496) sm: VCM 0x1F2 d0=08 d2=20 req=NORMAL mode=117 (entering charge)
+I (18526) sm: HV bus 40 V (0x1DA)
+I (18776) sm: HV bus 386 V (0x1DA)
+I (18796) sm: VCM 0x1F2 d0=00 d2=20 req=NORMAL mode=118 (entering charge)
+I (18896) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=120 (entering charge)
+I (18896) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=1 d6=E0
+I (20003) lear: 0x054 dlc=8 data 00 00 00 00 00 00 00 00 (first frame)
+I (20003) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF (first frame)
+I (20004) lear: 0x277 dlc=8 data 01 ED 12 C0 12 C0 12 C0 (first frame)
+I (20010) lear: 0x279 dlc=8 data 00 00 00 00 00 10 00 06 (first frame)
+I (20017) lear: 0x27D dlc=8 data 00 00 00 00 00 00 00 00 (first frame)
+I (20023) lear: 0x615 dlc=8 data 21 00 00 00 00 00 00 00 (first frame)
+I (20029) lear: 0x616 dlc=8 data 00 00 00 00 00 00 00 00 (first frame)
+I (20035) lear: 0x617 dlc=8 data 00 00 00 00 05 00 BC 00 (first frame)
+I (20042) lear: 0x618 dlc=8 data 00 00 00 00 00 00 00 00 (first frame)
+I (20048) lear: 0x619 dlc=8 data 02 02 00 00 00 02 31 00 (first frame)
+I (20054) sm: Lear broadcasting
+I (20057) sm: Lear DC 0.0 V 0.0 A
+I (20060) sm: SM: AC at the Lear 1988 ms after State C
+I (21083) lear: 0x277 dlc=8 data 01 ED 01 DA 01 E4 01 C7 chg 00 00 13 FF 13 FF 13 FF
+I (21084) lear: 0x279 dlc=8 data 00 00 00 00 00 22 00 06 chg 00 10 00 00 00 3F 00 00
+I (21087) lear: 0x27D dlc=8 data 00 00 00 07 00 00 00 00 chg 00 00 00 07 00 00 00 00
+I (21095) lear: 0x616 dlc=8 data 00 DC 0F A0 00 00 00 00 chg 00 DC 0F A0 00 00 00 00
+I (21102) lear: 0x617 dlc=8 data 00 00 00 00 0B 00 BC 00 chg 00 05 00 00 0F 00 00 00
+I (21110) lear: 0x619 dlc=8 data 02 02 00 00 00 02 33 00 chg 00 00 00 00 00 00 02 00
+I (21266) sm: SM: charge contactors closed (HV bus 386 V)
+I (21324) lear: 0x615 dlc=8 data 21 00 00 00 00 00 06 00 chg 00 00 00 00 00 00 06 00
+I (22163) lear: 0x277 dlc=8 data 01 ED 01 E4 01 E4 01 CA chg 00 00 00 3E 00 00 00 0D
+I (22164) lear: 0x279 dlc=8 data 30 45 00 00 00 29 00 06 chg 30 45 00 00 00 0F 00 00
+I (22167) lear: 0x27D dlc=8 data 00 00 00 07 00 00 00 00 chg 01 B0 00 00 00 00 00 BF
+I (22175) lear: 0x617 dlc=8 data 0F 16 00 00 0D 00 BC 00 chg 0F 16 00 00 07 00 00 00
+I (22296) sm: VCM 0x1F2 d0=10 d2=20 req=NORMAL mode=130 (charging)
+I (22306) sm: VCM 0x1F2 d0=30 d2=20 req=NORMAL mode=130 (charging)
+I (22306) sm: VCM 0x1F2 max charge power 100 W (d1=65)
+I (22306) sm: SM: Lear enabled, AC limit 0.8 A
+I (22309) sm: SM: AUTH_START -> AUTH_CHARGING (VCM power command)
+I (22404) lear: 0x615 dlc=8 data 21 00 00 00 00 00 00 00 chg 00 00 00 00 00 00 07 00
+I (22404) lear: 0x616 dlc=8 data 00 DC 0F A0 00 00 29 01 chg 00 00 00 00 00 00 29 01
+I (22556) sm: VCM 0x1F2 max charge power 2100 W (d1=79)
+I (22806) sm: VCM 0x1F2 max charge power 3300 W (d1=85)
+I (23243) lear: 0x277 dlc=8 data 01 ED 01 E4 01 E4 01 CA chg 00 00 00 04 00 00 00 07
+I (23244) lear: 0x279 dlc=8 data 30 45 00 00 00 2C 00 06 chg 00 00 00 00 00 07 00 00
+I (23247) lear: 0x617 dlc=8 data 0F 16 00 00 0E 00 BC 00 chg 00 00 00 00 03 00 00 00
+I (23484) lear: 0x616 dlc=8 data 00 DC 0F A0 00 01 13 01 chg 00 00 00 00 00 01 FF 00
+I (24323) lear: 0x277 dlc=8 data 01 ED 01 E4 01 E4 01 CA chg 00 00 00 04 00 04 00 07
+I (24324) lear: 0x279 dlc=8 data 30 45 00 00 00 2D 00 06 chg 00 00 00 00 00 01 00 00
+I (24685) lear: 0x619 dlc=8 data 04 02 01 00 00 02 33 00 chg 06 00 01 00 00 00 00 00
+I (25403) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E4 01 CA chg 00 00 00 04 00 00 00 00
+I (26483) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 00 00 04 00 04 00 00
+I (27563) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E4 01 CA chg 00 00 00 04 00 04 00 00
+I (28643) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 00 00 04 00 04 00 00
+I (28644) lear: 0x279 dlc=8 data 30 45 00 00 00 2E 00 06 chg 00 00 00 00 00 03 00 00
+I (28883) lear: 0x274 dlc=8 data 00 00 00 00 00 00 38 FF chg 00 00 00 00 00 00 0F 00
+I (29723) lear: 0x277 dlc=8 data 01 ED 01 E4 01 E4 01 CA chg 00 10 00 04 00 04 00 0D
+I (29724) lear: 0x279 dlc=8 data 30 45 00 00 00 2D 00 06 chg 00 00 00 00 00 03 00 00
+I (29963) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (30056) sm: Lear DC 386.2 V 0.0 A
+I (30685) lear: 0x618 dlc=8 data 00 00 00 00 00 00 00 03 chg 00 00 00 00 00 00 00 03
+I (30803) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 00 00 04 00 04 00 00
+I (30804) lear: 0x279 dlc=8 data 30 45 00 00 00 2E 00 06 chg 00 00 00 00 00 03 00 00
+I (31883) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E4 01 CA chg 00 00 00 04 00 04 00 07
+I (32963) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 00 00 04 00 04 00 00
+I (33083) lear: 0x274 dlc=8 data 00 00 00 00 00 00 38 FF chg 00 00 00 00 00 00 0F 00
+I (34043) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E4 01 CA chg 00 10 00 00 00 04 00 07
+I (34163) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (35123) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 10 00 3D 00 04 00 07
+I (35243) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (36203) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 10 00 3D 00 04 00 07
+I (36323) lear: 0x274 dlc=8 data 00 00 00 00 00 00 38 FF chg 00 00 00 00 00 00 0F 00
+I (37283) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 10 00 00 00 00 00 00
+I (37403) lear: 0x274 dlc=8 data 00 00 00 00 00 00 38 FF chg 00 00 00 00 00 00 0F 00
+I (38363) lear: 0x277 dlc=8 data 01 ED 01 DD 01 E0 01 CA chg 00 10 00 3D 00 00 00 07
+I (38483) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (39443) lear: 0x277 dlc=8 data 01 ED 01 E0 01 E0 01 CA chg 00 10 00 3D 00 00 00 07
+I (39563) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (40056) sm: Lear DC 386.2 V 0.0 A
+I (40523) lear: 0x277 dlc=8 data 01 ED 01 DD 01 E0 01 CA chg 00 00 00 3D 00 00 00 00
+I (41603) lear: 0x277 dlc=8 data 01 ED 01 DD 01 E0 01 CA chg 00 00 00 3D 00 00 00 00
+I (43043) lear: 0x277 dlc=8 data 01 ED 01 DD 01 E0 01 C7 chg 00 00 00 00 00 00 00 0D
+I (44123) lear: 0x274 dlc=8 data 00 00 00 00 00 00 38 FF chg 00 00 00 00 00 00 0F 00
+I (44123) lear: 0x277 dlc=8 data 01 FD 01 DD 01 E0 01 CA chg 00 10 00 00 00 3D 00 0D
+I (45203) lear: 0x274 dlc=8 data 00 00 00 00 00 00 37 FF chg 00 00 00 00 00 00 0F 00
+I (45203) lear: 0x277 dlc=8 data 01 ED 01 DD 01 DD 01 CA chg 00 10 00 00 00 3D 00 00
+I (45444) lear: 0x279 dlc=8 data 30 45 00 00 00 2F 00 06 chg 00 00 00 00 00 01 00 00
+I (45445) lear: 0x617 dlc=8 data 0F 16 00 00 0F 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (46283) lear: 0x277 dlc=8 data 01 ED 01 DD 01 DD 01 CA chg 00 00 00 07 00 3D 00 0D
+I (46524) lear: 0x279 dlc=8 data 30 45 00 00 00 2E 00 06 chg 00 00 00 00 00 01 00 00
+I (46525) lear: 0x617 dlc=8 data 0F 16 00 00 0E 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (47363) lear: 0x277 dlc=8 data 01 ED 01 DA 01 DD 01 C7 chg 00 00 00 07 00 00 00 0D
+I (47604) lear: 0x279 dlc=8 data 30 45 00 00 00 2F 00 06 chg 00 00 00 00 00 01 00 00
+I (47605) lear: 0x617 dlc=8 data 0F 16 00 00 0F 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (48443) lear: 0x277 dlc=8 data 01 ED 01 DD 01 DD 01 C7 chg 00 00 00 07 00 00 00 0D
+I (48684) lear: 0x279 dlc=8 data 30 45 00 00 00 2F 00 06 chg 00 00 00 00 00 01 00 00
+I (48685) lear: 0x617 dlc=8 data 0F 16 00 00 0F 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (49523) lear: 0x277 dlc=8 data 01 ED 01 DA 01 DD 01 C7 chg 00 00 00 07 00 00 00 0D
+I (49764) lear: 0x279 dlc=8 data 30 45 00 00 00 2E 00 06 chg 00 00 00 00 00 01 00 00
+I (49765) lear: 0x617 dlc=8 data 0F 16 00 00 0E 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (50056) sm: Lear DC 386.2 V 0.0 A
+I (50603) lear: 0x277 dlc=8 data 01 ED 01 DA 01 DD 01 C7 chg 00 00 00 00 00 07 00 0D
+I (50844) lear: 0x279 dlc=8 data 30 45 00 00 00 2E 00 06 chg 00 00 00 00 00 01 00 00
+I (50845) lear: 0x617 dlc=8 data 0F 16 00 00 0E 00 BC 00 chg 00 00 00 00 01 00 00 00
+I (51083) lear: 0x274 dlc=8 data 00 00 00 00 00 00 3A FF chg 00 00 00 00 00 00 0D 00
+W twai: twai1 err 0x10 (1 since last report)
+E (52175) esp_twai: _node_queue_tx(598): tx queue full
+W (52175) twai: twai1 0x050 TX dropped
+W twai: twai1 err 0x10 (3677 since last report)
+E (52275) esp_twai: _node_queue_tx(598): tx queue full
+W (52275) twai: twai1 0x050 TX dropped
+E (52375) esp_twai: _node_queue_tx(598): tx queue full
+W (52375) twai: twai1 0x050 TX dropped
+E (52475) esp_twai: _node_queue_tx(598): tx queue full
+W (52475) twai: twai1 0x050 TX dropped
+E (52575) esp_twai: _node_queue_tx(598): tx queue full
+W (52575) twai: twai1 0x050 TX dropped
+E (52675) esp_twai: _node_queue_tx(598): tx queue full
+W (52675) twai: twai1 0x050 TX dropped
+E (52775) esp_twai: _node_queue_tx(598): tx queue full
+W (52775) twai: twai1 0x050 TX dropped
+E (52875) esp_twai: _node_queue_tx(598): tx queue full
+W (52875) twai: twai1 0x050 TX dropped
+E (52975) esp_twai: _node_queue_tx(598): tx queue full
+W (52975) twai: twai1 0x050 TX dropped
+E (53075) esp_twai: _node_queue_tx(598): tx queue full
+W (53075) twai: twai1 0x050 TX dropped
+E (53175) esp_twai: _node_queue_tx(598): tx queue full
+W (53175) twai: twai1 0x050 TX dropped
+W twai: twai1 err 0x10 (3676 since last report)
+E (53275) esp_twai: _node_queue_tx(598): tx queue full
+W (53275) twai: twai1 0x050 TX dropped
+E (53375) esp_twai: _node_queue_tx(598): tx queue full
+W (53375) twai: twai1 0x050 TX dropped
+E (53475) esp_twai: _node_queue_tx(598): tx queue full
+W (53475) twai: twai1 0x050 TX dropped
+E (53575) esp_twai: _node_queue_tx(598): tx queue full
+W (53575) twai: twai1 0x050 TX dropped
+E (53675) esp_twai: _node_queue_tx(598): tx queue full
+W (53675) twai: twai1 0x050 TX dropped
+I (53706) sm: Lear silent
+W (53706) sm: SM: charge stopped: Lear silent (AC lost)
+I (53706) sm: SM: AUTH_CHARGING -> AUTH_STOP (Lear silent (AC lost))
+E (53775) esp_twai: _node_queue_tx(598): tx queue full
+W (53775) twai: twai1 0x050 TX dropped
+I (53776) sm: VCM 0x1D4 HV live=1 relay+=1 charge session=0 d6=60
+I (53786) sm: VCM 0x1F2 max charge power 0 W (d1=64)
+E (53875) esp_twai: _node_queue_tx(598): tx queue full
+W (53875) twai: twai1 0x050 TX dropped
+E (53975) esp_twai: _node_queue_tx(598): tx queue full
+W (53975) twai: twai1 0x050 TX dropped
+I (53996) sm: VCM 0x1F2 d0=30 d2=60 req=STOP mode=144 (charge shutdown)
+I (54006) sm: VCM 0x1F2 d0=70 d2=60 req=STOP mode=146 (charge shutdown)
+E (54075) esp_twai: _node_queue_tx(598): tx queue full
+W (54075) twai: twai1 0x050 TX dropped
+E (54175) esp_twai: _node_queue_tx(598): tx queue full
+W (54175) twai: twai1 0x050 TX dropped
+W twai: twai1 err 0x10 (3677 since last report)
+E (54275) esp_twai: _node_queue_tx(598): tx queue full
+W (54275) twai: twai1 0x050 TX dropped
+E (54375) esp_twai: _node_queue_tx(598): tx queue full

@@ -151,8 +151,8 @@ static void rx_dispatcher_task(void *pvParams)
 ```
 
 - **Queue:** Single shared `QueueHandle_t rx_queue` fed by both TWAI0 and TWAI1
-  `on_rx_done` ISRs. Queue depth: **16 entries** minimum (handles burst of all 15
-  distinct target IDs — 11 on TWAI0, 4 on TWAI1 — with headroom).
+  `on_rx_done` ISRs. Queue depth: **16 entries** minimum (holds a burst of all 16
+  distinct target IDs — 11 on TWAI0, 5 on TWAI1).
 - **Queue element type:** A struct containing `{ twai_node_handle_t bus, uint32_t id,
   uint8_t data[8], uint8_t dlc }` — a full value copy, not a pointer.
 - The dispatcher calls handler functions that are allowed to use FreeRTOS primitives

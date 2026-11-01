@@ -51,11 +51,14 @@ typedef struct {
     /* 0x55B LBC SOC, placeholder 0x3FF filtered */
     volatile bool     soc_valid;
     volatile uint16_t soc_x10;         /* 0.1 % */
-    /* Lear (TWAI1): any frame = Lear alive (it broadcasts whenever powered); 0x617 DC output */
+    /* Lear (TWAI1): any core frame (TWAI1_ID_IS_CORE) = Lear alive (it broadcasts whenever powered);
+     * 0x617 DC output; 0x27D AC input voltage */
     volatile uint32_t cnt_lear;
     volatile uint32_t cnt_617;
     volatile uint16_t lear_dc_dv;      /* 0.1 V */
     volatile uint16_t lear_dc_da;      /* 0.1 A */
+    volatile uint32_t cnt_27d;
+    volatile uint16_t lear_ac_dv;      /* 0.1 V, written before cnt_27d is incremented */
 } sm_rx_status_t;
 
 extern sm_rx_status_t g_sm_rx;

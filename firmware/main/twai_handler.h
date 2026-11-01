@@ -26,6 +26,10 @@ typedef struct {
     uint8_t            dlc;
 } can_rx_event_t;
 
+/* Lear (TWAI1) IDs the state machine depends on (0x27D: AC input voltage).  With SM_LOG_LEAR_RAW the bus delivers
+ * every other ID too, for logging only: those frames must not count as "Lear alive". */
+#define TWAI1_ID_IS_CORE(id) ((id) == 0x274u || (id) == 0x27Du || (id) == 0x616u || (id) == 0x617u || (id) == 0x618u)
+
 /* Shared RX queue — created in app_main() before twai_handler_init() */
 extern QueueHandle_t rx_queue;
 

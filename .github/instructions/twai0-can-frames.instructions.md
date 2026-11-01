@@ -61,8 +61,8 @@ Applies to received messages: **0x1DA, 0x1DB, 0x1DC, 0x55B, 0x1D4** (verified on
 | Byte | Bits | Field | Encoding Rule |
 |------|------|-------|---------------|
 | d[0] | [7:5] | Reserved | 0 |
-| d[0] | [4] | AC input type, 200 V class | 1 while 200 V-class AC is present (FSM "AC input type signal") |
-| d[0] | [3] | AC input type, 100 V class *(inferred)* | 1 while 100 V-class AC is present (`SM_AC_TYPE_MASK`) |
+| d[0] | [4] | AC input type, 200 V class | 1 while 200 V-class AC is present (FSM "AC input type signal"); the stock OBC sets it ≈ 200 ms after the first AC voltage. Bridge: measured AC ≥ `SM_AC_200V_CLASS_MIN_V` |
+| d[0] | [3] | AC input type, 100 V class *(inferred)* | 1 while 100 V-class AC is present. Bridge: measured AC < `SM_AC_200V_CLASS_MIN_V` |
 | d[0] | [2] | Reserved | 0 |
 | d[0] | [1] | Base bit | 1 in every frame except the first after an OBC start (`0x00` then `0x02`) |
 | d[0] | [0] | Stop request acknowledged *(inferred)* | 1 together with d[2] mode = standby |
@@ -80,7 +80,7 @@ Applies to received messages: **0x1DA, 0x1DB, 0x1DC, 0x55B, 0x1D4** (verified on
 | d[4] | [4] | S2 closed / State C *(inferred)* | 1 while State C is asserted |
 | d[4] | [3:0] | Output power bits [8:5] *(inferred)* | 9-bit value × 0.1 kW, LSBs in d[5] |
 | d[5] | [7:3] | Output power bits [4:0] *(inferred)* | |
-| d[5] | [2:0] | AC voltage bits [8:6] | 9-bit raw; V = raw × 0.5 + 70; raw 0 = no AC (DBC) |
+| d[5] | [2:0] | AC voltage bits [8:6] | 9-bit raw; V = raw × 0.5 + 70; raw 0 = no AC (DBC). A live measurement: the stock OBC updates it every frame (229 V idle, 222.5 V at 3.3 kW). Bridge: the Lear's `0x27D` reading |
 | d[6] | [7:2] | AC voltage bits [5:0] | |
 | d[6] | [1:0] | Reserved | 0 |
 | d[7] | [7] | Unknown | Set ≈ 0.5 s after the relay closes, cleared with the stop acknowledge |
