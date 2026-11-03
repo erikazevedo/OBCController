@@ -16,10 +16,10 @@ No output requires open-drain mode. No output is toggled from ISR context.
 
 | Macro | GPIO | Function | Circuit | Active State |
 |---|---|---|---|---|
-| `GPIO_CP_ENABLE` | GPIO9 | CP_ENABLE | MOSFET switching resistor to GND | HIGH = resistor connected |
-| `GPIO_PLUG_SIG` | GPIO8 | PLUG_SIG | MOSFET switching | HIGH = active |
+| `GPIO_CP_ENABLE` | GPIO9 | CP_ENABLE | MOSFET switching resistor to GND | HIGH = resistor connected (State C) |
+| `GPIO_PLUG_SIG` | GPIO8 | PLUG_SIG | MOSFET pulls OBC pin 21 low → combination-meter plug indicator | HIGH = plug present (`SM_PLUG_SIG_ENABLE`) |
 | `GPIO_STATUS_LED` | GPIO15 | Status LED | LED anode drive | HIGH = LED on |
-| `GPIO_EVA_REQ` | GPIO19 | EVA_REQ | MOSFET → PNP → +12 V pulse | HIGH = pulse active |
+| `GPIO_EVA_REQ` | GPIO19 | EVA_REQ | MOSFET → PNP → OBC pin 18 → VCM pin 96 (EV system activation request) | HIGH = pulse active |
 | `GPIO_CONT_POS` | GPIO22 | CONT_POS | Low-side contactor MOSFET | HIGH = contactor closed |
 | `GPIO_CONT_NEG` | GPIO23 | CONT_NEG | Low-side contactor MOSFET | HIGH = contactor closed |
 
@@ -113,11 +113,23 @@ gpio_set_level(GPIO_NUM_22, 1);
 
 ## EVA_REQ — Pulse Output Timing Note
 
-`GPIO_EVA_REQ` drives a MOSFET that gates a PNP transistor producing a +12 V pulse.
-The pulse width and timing are determined by the state machine task logic.
+`GPIO_EVA_REQ` drives a MOSFET that gates a PNP transistor producing the EV system
+activation request on OBC pin 18 (VCM pin 96). The FSM scope trace (EVC-78) shows a
+≈ 4 V pulse of ≈ 1 s when the charge connector is inserted; the VCM wakes in charge mode
+only with the power switch OFF.
+
+The state machine pulses it for `SM_EVA_PULSE_MS` (1000 ms) to wake the VCM for a charge.
+The pulse is tick-counted, not a blocking delay, and `sm_eva_tick()` runs every cycle in
+every state so the line can never stay asserted; every exit to SLEEP or POWER_ON also
+de-asserts it.
 **Do not leave EVA_REQ asserted indefinitely** — the downstream PNP drive circuit is
-not intended for continuous conduction. The state machine is responsible for enforcing
-a maximum assertion duration appropriate to the hardware design.
+not intended for continuous conduction.
+
+## PLUG_SIG — Plug-in Indicator
+
+`GPIO_PLUG_SIG` pulls OBC pin 21 to ground, which lights the plug icon on the combination
+meter (verified on the car). The state machine drives it HIGH while the ADC reports a
+plug (zone A or B) and LOW otherwise, in every state. `SM_PLUG_SIG_ENABLE 0` leaves it LOW.
 
 ---
 
@@ -129,6 +141,11 @@ sequence and opening sequence** to protect against pre-charge faults or arcing:
 
 - RECOMMENDED closure sequence: energise pre-charge path before asserting CONT_POS and
   CONT_NEG simultaneously, if pre-charge is part of the system design.
+- Implemented: CONT_NEG, then CONT_POS 500 ms later; opening in reverse. The contactors
+  close onto a live HV bus, only after `0x1D4` reports HV live (the VCM has precharged and
+  closed its main relays). The Lear output capacitance is not precharged first. The
+  contactors open only once the Lear output is below 1 A, and a stop between NEG and POS
+  opens NEG at once.
 - REQUIRED: both contactors MUST be de-asserted (driven LOW) immediately on any
   TWAI0 bus-off event or loss of PWM signal.
 

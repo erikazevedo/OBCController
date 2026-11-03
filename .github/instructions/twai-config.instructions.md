@@ -79,12 +79,12 @@ TWAI0 uses **dual mask filter mode** to maximise hardware pre-filtering.
 
 ```c
 // Filter 1: covers 0x1D0–0x1DF  AND  0x1F0–0x1FF
-//   Target IDs in this range: 0x1D4, 0x1DB, 0x1DC, 0x1F2
-// Filter 2: covers 0x500–0x5FF
-//   Target IDs in this range: 0x50B, 0x55B, 0x5BC
+//   Target IDs in this range: 0x1D4, 0x1DA, 0x1DB, 0x1DC, 0x1F2
+// Filter 2: covers 0x400–0x7FF (bit 10 must be set)
+//   Target IDs in this range: 0x50B, 0x55B, 0x5BC, 0x603, 0x68C, 0x6C0 (display settings)
 twai_mask_filter_config_t twai0_filter =
     twai_make_dual_filter(0x1D0, 0x7D0,   /* id1, mask1 */
-                          0x500, 0x700,   /* id2, mask2 */
+                          0x400, 0x400,   /* id2, mask2 */
                           false);         /* 11-bit standard IDs */
 // Apply after node creation, before enable:
 ESP_ERROR_CHECK(twai_node_config_mask_filter(twai0_hdl, 0, &twai0_filter));
@@ -94,7 +94,7 @@ ESP_ERROR_CHECK(twai_node_config_mask_filter(twai0_hdl, 0, &twai0_filter));
 
 **REQUIRED: software rejection** — The hardware filter passes false positives.
 Inside `on_rx_done`, after calling `twai_node_receive_from_isr()`, reject any frame
-whose ID is not exactly one of: `{0x1D4, 0x1DB, 0x1DC, 0x1F2, 0x50B, 0x55B, 0x5BC}`.
+whose ID is not exactly one of: `{0x1D4, 0x1DA, 0x1DB, 0x1DC, 0x1F2, 0x50B, 0x55B, 0x5BC, 0x603, 0x68C, 0x6C0}`.
 
 ### TX Frames
 
@@ -114,59 +114,31 @@ true, both frames are transmitted in sequence. `CONFIG_TWAI_IO_FUNC_IN_IRAM=y` e
 The alarm ISR callback and all frame data buffers it accesses MUST be `IRAM_ATTR` /
 `DRAM_ATTR` respectively.
 
-### TX-Enable Gate — 0x50B VCM Wake/Sleep Command
+**REQUIRED: private TX buffers.** The driver keeps a pointer to the frame buffer until the
+frame is on the bus, and `0x5BF` queues behind `0x380`. The ISR therefore copies
+`frame_380_data` / `frame_5bf_data` into private `DRAM_ATTR` TX buffers inside
+`portENTER_CRITICAL_ISR(&g_twai0_frame_lock)`, then writes PRUN and CSUM into the copies
+(`obc_frame_seal()` in `obc_frames.h`) and transmits them. Only the ISR writes the private
+buffers. The TWAI1 task does the same for `0x050` under `g_frame050_lock`.
 
-Transmission of 0x380 and 0x5BF is gated by `DRAM_ATTR volatile bool g_twai0_tx_enabled`,
-controlled entirely by the **RX dispatcher task** when it processes 0x50B frames.
+### TX-Enable Gate — `g_twai0_tx_enabled`
 
-#### State Transitions
+Transmission of 0x380, 0x5BF and 0x6C1 is gated by `DRAM_ATTR volatile bool g_twai0_tx_enabled`.
+There is no start-up delay: the stock OBC answers 250 ms after the VCM wakes.
 
-| `d[3][7:6]` | Symbolic name | Action |
-|---|---|---|
-| `0b11` | RUN — SLEEP→RUN leading edge | Start 5-second one-shot `esp_timer`; do NOT set flag yet |
-| `0b11` | RUN — already waiting or already enabled | No-op; do not restart the timer |
-| `0b00` | SLEEP | Set `g_twai0_tx_enabled = false`; set `g_twai0_tx_pending = false`; call `esp_timer_stop()` |
+| Owner | Rule |
+|---|---|
+| State machine task, end of each cycle | VCM-authorised states: transmit while a VCM frame (`0x50B`/`0x1F2`/`0x1D4`) arrived within `SM_TX_VCM_FRESH_MS` and GoToSleep has lasted less than `SM_SLEEP_TAIL_MS` (the VCM is awake in a charge wake with d[2] = 0x00). SLEEP and POWER_ON: transmit while the power switch is ON (`0x50B` d[2] != 0x00, fresh within `SM_VCM_SILENT_MS`) |
 
-**REQUIRED:** The `esp_timer` one-shot callback (fires 5 s after the first `0b11` frame)
-sets `g_twai0_tx_enabled = true`. The timer is created once at init with
-`esp_timer_create()` and reused across RUN/SLEEP cycles via `esp_timer_start_once()` /
-`esp_timer_stop()`.
+> **Do not gate on `0x50B d[2]` alone:** a charge wake keeps d[2] = `0x00`
+> for the whole session (only d[3][7:6] = `11` shows the VCM is awake), so the bridge would
+> stay silent and the VCM would time out after 10.24 s.
 
-```c
-// One-shot timer callback — runs in esp_timer task context
-static void twai0_tx_enable_cb(void *arg)
-{
-    g_twai0_tx_enabled = true;
-}
-
-// Called from RX dispatcher when a 0x50B frame is decoded
-static void handle_50b(const uint8_t *data)
-{
-    uint8_t cmd = (data[3] >> 6) & 0x03;
-    if (cmd == 0x03) {                              // RUN
-        if (!g_twai0_tx_pending && !g_twai0_tx_enabled) {
-            g_twai0_tx_pending = true;
-            esp_timer_start_once(twai0_tx_delay_timer, 5000000ULL); // 5 s
-        }
-    } else if (cmd == 0x00) {                       // SLEEP
-        g_twai0_tx_enabled  = false;
-        g_twai0_tx_pending  = false;
-        esp_timer_stop(twai0_tx_delay_timer);
-    }
-}
-```
-
-`g_twai0_tx_pending` is a sentinel that prevents the 5-second timer being restarted on
-every subsequent `0b11` frame received during the delay window.
-
-**REQUIRED:** Both `g_twai0_tx_enabled` and `g_twai0_tx_pending` MUST be declared
-`DRAM_ATTR volatile bool`. `g_twai0_tx_enabled` is read from the gptimer alarm ISR.
-
-**REQUIRED:** `twai0_tx_delay_timer` MUST be created (via `esp_timer_create()`) inside
-`twai_handler_init()`, before any call to `twai_node_enable()`.
-
-**NOTE:** The `esp_timer` callback does NOT require `IRAM_ATTR` — it only writes a
-single `volatile bool` and makes no cache-sensitive calls.
+> **Never transmit to an empty bus.** TWAI0 uses `fail_retry_cnt = -1`: an unacknowledged
+> frame is retried until some node ACKs it, keeping a sleeping EV-CAN busy. A finite retry
+> count is not a fix on the ESP32-C6 — any value other than -1 selects single-shot mode, which
+> also drops frames that lose arbitration (routine for 0x380/0x5BF). Close the gate while
+> other nodes are still transmitting.
 
 ### Error Handling — REQUIRED
 
@@ -176,7 +148,11 @@ Register an `on_state_change` callback. On transition to `TWAI_ERROR_BUS_OFF`:
 2. Set a `DRAM_ATTR volatile` flag visible to the state machine task.
 3. The state machine task MUST treat TWAI0 bus-off as a high-priority fault condition.
 
-Register an `on_error` callback to log `twai_error_flags_t` fields at `ESP_LOG_WARN`.
+Register an `on_error` callback to log `twai_error_flags_t` fields at `ESP_LOG_WARN`,
+**rate-limited** to one line per bus per `TWAI_ERR_LOG_PERIOD_MS` (1 s) carrying the error
+count and the OR of the flags since the previous line. An unacknowledged frame is retried
+every ≈ 0.3 ms and each retry raises a bus error; one blocking `ESP_DRAM_LOGW` (≈ 2 ms at
+115200 baud) per error keeps the level-3 ISR running back to back and starves every task.
 
 ---
 
@@ -199,18 +175,25 @@ Identical to TWAI0 config except pin assignments. Same `tx_queue_depth`, `fail_r
 ### Acceptance Filter — REQUIRED
 
 ```c
-// Filter 1: exact match for 0x274  (mask 0x7FF = all bits must match)
+// Filter 1: covers 0x270–0x27F
+//   Target IDs in this range: 0x274, 0x27D (AC input voltage)
 // Filter 2: covers 0x610–0x61F
 //   Target IDs in this range: 0x616, 0x617, 0x618
 twai_mask_filter_config_t twai1_filter =
-    twai_make_dual_filter(0x274, 0x7FF,
+    twai_make_dual_filter(0x270, 0x7F0,
                           0x610, 0x7F0,
                           false);
 ESP_ERROR_CHECK(twai_node_config_mask_filter(twai1_hdl, 0, &twai1_filter));
 ```
 
 **REQUIRED: software rejection** inside `on_rx_done` — accept only
-`{0x274, 0x616, 0x617, 0x618}`, drop everything else.
+`{0x274, 0x27D, 0x616, 0x617, 0x618}` (`TWAI1_ID_IS_CORE()`), drop everything else.
+
+**Raw capture (`SM_LOG_LEAR_RAW 1`, default).** To find undocumented Lear signals the hardware filter is
+opened (`twai_make_dual_filter(0, 0, 0, 0, false)`, mask 0 = don't care) and the software rejection accepts
+every ID. Frames outside the five core IDs (`TWAI1_ID_IS_CORE()`) are best effort: the ISR drops them while
+`rx_queue` holds `TWAI1_RAW_QUEUE_LIMIT` events or more, and the RX dispatcher only logs them — they never
+count as "Lear alive". With `SM_LOG_LEAR_RAW 0` the filter and rejection above apply unchanged.
 
 ### TX Frame
 
@@ -246,7 +229,7 @@ Every symbol touched from a TWAI ISR callback context MUST comply:
 | Error/state flag variables | `DRAM_ATTR volatile` |
 | Queue handle (for `xQueueSendFromISR`) | `DRAM_ATTR` |
 | `g_twai0_tx_enabled` (TWAI0 TX gate) | `DRAM_ATTR volatile` |
-| `g_twai0_tx_pending` (5-second delay sentinel) | `DRAM_ATTR volatile` |
+| `g_twai0_frame_lock` / private TX copies of 0x380 and 0x5BF | `DRAM_ATTR` |
 
 Failure to apply these when `CONFIG_TWAI_ISR_CACHE_SAFE=y` causes the driver to return
 `ESP_ERR_INVALID_ARG` at callback registration time.

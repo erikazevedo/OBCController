@@ -5,8 +5,6 @@
 #include "driver/mcpwm_cap.h"
 #include "esp_timer.h"
 
-static const char *TAG = "mcpwm";
-
 volatile uint32_t DRAM_ATTR g_pwm_duty_us    = 0;
 volatile uint32_t DRAM_ATTR g_pwm_period_us  = 0;
 volatile bool     DRAM_ATTR g_pwm_signal_valid = false;

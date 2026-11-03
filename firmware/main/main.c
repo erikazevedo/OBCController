@@ -10,8 +10,6 @@
 #include "state_machine.h"
 #include "rx_dispatcher.h"
 
-static const char *TAG = "main";
-
 /* TWAI1 TX task handle — suspend/resume controlled by state_machine_task */
 TaskHandle_t twai1_tx_task_hdl = NULL;
 
@@ -20,7 +18,10 @@ static void twai1_tx_task(void *pvParams)
     TickType_t last_wake = xTaskGetTickCount();
     for (;;) {
         twai1_tx_frame_050();
-        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100));
+        /* After a vTaskResume the deadline is long past: re-align instead of sending every missed period back-to-back */
+        if (xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(100)) == pdFALSE) {
+            last_wake = xTaskGetTickCount();
+        }
     }
 }
 

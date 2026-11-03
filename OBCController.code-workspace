@@ -5,6 +5,15 @@
 		},
 		{
 			"path": "firmware"
+		},
+		{
+			"path": "../LeafOBCBridge/hardware"
+		},
+		{
+			"path": "../LeafOBCBridge"
+		},
+		{
+			"path": "../LeafDisplay"
 		}
 	],
 	"settings": {

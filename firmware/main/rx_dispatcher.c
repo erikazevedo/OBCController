@@ -1,36 +1,48 @@
 #include "rx_dispatcher.h"
 #include "twai_handler.h"
 #include "state_machine.h"
+#include "sm_config.h"
+#include "obc_frames.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
 static const char *TAG = "rx_disp";
+static const char *TAG_LEAR = "lear";
 
 TaskHandle_t rx_dispatcher_task_hdl = NULL;
 
 /* ── 0x50B — VCM Wake/Sleep command ──────────────────────────────────────── */
+/* d[3][7:6] is WakeUp (0b11) / GoToSleep (0b00).  d[2] is non-zero only while the
+ * power switch is ON: a charge wake keeps d[2] = 0x00 for the whole session. */
 static void handle_50b(const uint8_t *data)
 {
-    uint8_t cmd = (data[3] >> 6) & 0x03u;
+    static TickType_t s_last_rx = 0;
+    TickType_t now   = xTaskGetTickCount();
+    bool       awake = vcm50b_wake_cmd(data) == VCM50B_CMD_WAKE;
 
-    if (cmd == 0x03u) {                                         /* RUN */
-        g_sm_vcm_run       = true;
-        g_sm_ev_on         = (data[2] != 0x00u);
-        g_twai0_tx_enabled = g_sm_ev_on;
-    } else if (cmd == 0x00u) {                                  /* SLEEP */
-        g_sm_vcm_sleep     = true;
-        g_twai0_tx_enabled = false;
+    if (awake && (!g_sm_rx.awake || (now - s_last_rx) > pdMS_TO_TICKS(SM_VCM_SILENT_MS))) {
+        g_sm_rx.wake_count++;
     }
+    s_last_rx        = now;
+    g_sm_rx.awake    = awake;
+    g_sm_rx.power_on = vcm50b_power_on(data);
+    g_sm_rx.d2_50b   = data[2];
+    g_sm_rx.d3_50b   = data[3];
+    g_sm_rx.cnt_50b++;
 }
 
 /* ── 0x1F2 — VCM Charge Command ──────────────────────────────────────────── */
 static void handle_1f2(const uint8_t *data)
 {
-    if (data[2] == 0x20u) {       /* CHARGING_SLOW — only valid charge trigger */
-        g_sm_vcm_charge_cmd = true;
-    }
+    g_sm_rx.req_1f2     = vcm1f2_request(data);
+    g_sm_rx.power_cmd_w = vcm1f2_power_cmd_w(data);
+    g_sm_rx.d0_1f2      = data[0];
+    g_sm_rx.d1_1f2      = data[1];
+    g_sm_rx.d2_1f2      = data[2];
+    g_sm_rx.mode_1f2    = vcm1f2_mode(data);
+    g_sm_rx.cnt_1f2++;
 }
 
 /* ── 0x1DB — LBC Voltage / Current / Failsafe ────────────────────────────── */
@@ -44,8 +56,19 @@ static void handle_1db(const uint8_t *data)
 /* ── 0x1D4 — VCM Torque Request / Charge Status ──────────────────────────── */
 static void handle_1d4(const uint8_t *data)
 {
-    if (data[6] == 0x8Cu) {       /* STATUS_INTERRUPTED */
-        g_sm_charge_interrupted = true;
+    g_sm_rx.hv_live        = vcm1d4_hv_live(data);
+    g_sm_rx.relay_plus     = vcm1d4_relay_plus(data);
+    g_sm_rx.charge_session = vcm1d4_charge_session(data);
+    g_sm_rx.d6_1d4         = data[6];
+    g_sm_rx.cnt_1d4++;
+}
+
+/* ── 0x1DA — Inverter HV bus voltage ─────────────────────────────────────── */
+static void handle_1da(const uint8_t *data)
+{
+    if (inv1da_bus_valid(data)) {
+        g_sm_rx.hv_bus_dv = inv1da_bus_dv(data);
+        g_sm_rx.cnt_1da++;
     }
 }
 
@@ -54,34 +77,160 @@ static void handle_55b(const uint8_t *data)
 {
     /* raw = 10-bit value; physical SOC (%) = raw / 10.0 */
     uint16_t raw = (uint16_t)(((uint16_t)data[0] << 2) | (data[1] >> 6));
-    g_sm_soc_pct = (float)raw * 0.1f;
+    if (raw < 0x3FFu) {           /* 0x3FF = not yet measured */
+        g_sm_rx.soc_x10   = raw;
+        g_sm_rx.soc_valid = true;
+    }
 }
 
-/* ── 0x603 / 0x68C — VCM Startup Beacons ────────────────────────────────── */
-static void handle_vcm_beacon(uint32_t id, const uint8_t *data)
+/* ── 0x6C0 — Display Unit Settings ───────────────────────────────────────────────────── */
+/* A frame that fails any check is dropped whole; previous settings stay in effect. */
+static void handle_display_cmd(const can_rx_event_t *event)
 {
-    ESP_LOGI(TAG, "0x%03"PRIX32"  %02X %02X %02X %02X %02X %02X %02X %02X",
-             id, data[0], data[1], data[2], data[3],
-             data[4], data[5], data[6], data[7]);
-    /* Halt TX immediately — resumes on next 0x50B with ev_on=ON */
-    g_twai0_tx_enabled = false;
-    /* Signal SM to reset to SLEEP */
-    g_sm_vcm_sleep = true;
-    ESP_LOGW(TAG, "VCM beacon 0x%03"PRIX32" — TX halted, SM->SLEEP", id);
+    const uint8_t *d = event->data;
+
+    if (event->dlc != 8u || d[7] != display_frame_csum(d)) {
+        ESP_LOGW(TAG, "0x6C0 rejected: bad dlc/csum (expected csum %02X)", display_frame_csum(d));
+        return;
+    }
+    for (int i = 2; i < 7; i++) {
+        if (d[i] != 0u) {
+            ESP_LOGW(TAG, "0x6C0 rejected: reserved byte d[%d] != 0", i);
+            return;
+        }
+    }
+
+    uint16_t volts = (uint16_t)((uint16_t)d[0] * 2u);
+    uint8_t  soc   = d[1];
+    if (volts < SM_TARGET_VOLTAGE_MIN_V || volts > SM_TARGET_VOLTAGE_MAX_V ||
+        soc   < SM_TARGET_SOC_MIN_PCT   || soc   > SM_TARGET_SOC_MAX_PCT) {
+        ESP_LOGW(TAG, "0x6C0 rejected: out of range (%u V, %u %%)", (unsigned)volts, (unsigned)soc);
+        return;
+    }
+
+    g_sm_target_voltage_v = volts;
+    g_sm_target_soc_pct   = soc;
+    ESP_LOGW(TAG, "0x6C0 applied: %u V, %u %%", (unsigned)volts, (unsigned)soc);
 }
 
-/* ── TWAI1 RX frames — OBC alive signal ──────────────────────────────────── */
-static void handle_twai1_frame(void)
+/* ── TWAI1 raw capture (SM_LOG_LEAR_RAW) ─────────────────────────────────── */
+/* One INFO line per Lear ID whenever its payload changed, at most one per SM_LOG_LEAR_RAW_MIN_MS.  "chg" is
+ * the OR of the bits that flipped between consecutive frames since the previous line, so a counter or
+ * checksum shows up as busy bits and a signal that follows the AC voltage as bits that differ only
+ * between a 120 V and a 240 V session. */
+#define LEAR_RAW_MAX_IDS   16
+
+typedef struct {
+    uint32_t   id;
+    bool       used;
+    bool       logged;
+    bool       pending;
+    uint8_t    dlc;
+    uint8_t    last[8];
+    uint8_t    chg[8];
+    TickType_t last_log;
+} lear_raw_t;
+
+static void hex8(char *out, const uint8_t *d)
 {
-    g_sm_twai1_rxd = true;
+    static const char k_hex[] = "0123456789ABCDEF";
+    for (int i = 0; i < 8; i++) {
+        out[i * 3]     = k_hex[d[i] >> 4];
+        out[i * 3 + 1] = k_hex[d[i] & 0x0Fu];
+        out[i * 3 + 2] = (i < 7) ? ' ' : '\0';
+    }
+}
+
+static void log_lear_raw(const can_rx_event_t *event)
+{
+    static lear_raw_t s_raw[LEAR_RAW_MAX_IDS];
+    static bool       s_full_warned;
+
+    lear_raw_t *r = NULL;
+    for (int i = 0; i < LEAR_RAW_MAX_IDS; i++) {
+        if (s_raw[i].used && s_raw[i].id == event->id) {
+            r = &s_raw[i];
+            break;
+        }
+        if (!s_raw[i].used) {
+            r          = &s_raw[i];
+            r->used    = true;
+            r->id      = event->id;
+            r->dlc     = event->dlc;
+            r->pending = true;
+            break;
+        }
+    }
+    if (r == NULL) {
+        if (!s_full_warned) {
+            ESP_LOGW(TAG_LEAR, "raw capture: more than %d IDs, ignoring 0x%03X", LEAR_RAW_MAX_IDS, (unsigned)event->id);
+            s_full_warned = true;
+        }
+        return;
+    }
+
+    if (r->dlc != event->dlc) {
+        r->dlc     = event->dlc;
+        r->pending = true;
+    }
+    for (int i = 0; i < 8; i++) {
+        uint8_t flipped = (uint8_t)(r->last[i] ^ event->data[i]);
+        if (flipped != 0u && r->logged) {
+            r->chg[i] |= flipped;
+            r->pending = true;
+        }
+        r->last[i] = event->data[i];
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    if (!r->pending || (r->logged && (now - r->last_log) < pdMS_TO_TICKS(SM_LOG_LEAR_RAW_MIN_MS))) {
+        return;
+    }
+
+    char data[8 * 3], chg[8 * 3];
+    hex8(data, r->last);
+    hex8(chg, r->chg);
+    if (r->logged) {
+        ESP_LOGI(TAG_LEAR, "0x%03X dlc=%u data %s chg %s", (unsigned)r->id, (unsigned)r->dlc, data, chg);
+    } else {
+        ESP_LOGI(TAG_LEAR, "0x%03X dlc=%u data %s (first frame)", (unsigned)r->id, (unsigned)r->dlc, data);
+    }
+    for (int i = 0; i < 8; i++) {
+        r->chg[i] = 0;
+    }
+    r->pending  = false;
+    r->logged   = true;
+    r->last_log = now;
+}
+
+/* ── TWAI1 RX frames — Lear alive signal, DC output, AC input voltage ────── */
+/* The Lear broadcasts whenever it is powered (also with the car ON and no plug) and for a while
+ * after a session, so a frame alone does not mean AC; the state machine decides that from the
+ * 0x27D AC input voltage.  IDs outside the core set (raw capture only) are logged and never counted. */
+static void handle_twai1_frame(const can_rx_event_t *event)
+{
+    if (TWAI1_ID_IS_CORE(event->id)) {
+        g_sm_rx.cnt_lear++;
+        if (event->id == 0x617u && event->dlc >= 4u) {
+            g_sm_rx.lear_dc_dv = lear617_dc_dv(event->data);
+            g_sm_rx.lear_dc_da = lear617_dc_da(event->data);
+            g_sm_rx.cnt_617++;
+        }
+        if (event->id == 0x27Du && event->dlc >= 2u) {
+            g_sm_rx.lear_ac_dv = lear27d_ac_dv(event->data);
+            g_sm_rx.cnt_27d++;
+        }
+    }
+    if (SM_LOG_LEAR_RAW) {
+        log_lear_raw(event);
+    }
 }
 
 /* ── Dispatch ─────────────────────────────────────────────────────────────── */
 void dispatch_can_message(const can_rx_event_t *event)
 {
     if (event->bus == twai1_hdl) {
-        /* Any TWAI1 frame signals OBC alive (EVSE_ENABLE → CHARGING trigger) */
-        handle_twai1_frame();
+        handle_twai1_frame(event);
         return;
     }
 
@@ -89,11 +238,13 @@ void dispatch_can_message(const can_rx_event_t *event)
     switch (event->id) {
         case 0x50Bu: handle_50b(event->data); break;
         case 0x1F2u: handle_1f2(event->data); break;
+        case 0x1DAu: handle_1da(event->data); break;
         case 0x1DBu: handle_1db(event->data); break;
         case 0x1D4u: handle_1d4(event->data); break;
         case 0x55Bu: handle_55b(event->data); break;
         case 0x603u: /* fall-through */
-        case 0x68Cu: handle_vcm_beacon(event->id, event->data); break;
+        case 0x68Cu: g_sm_rx.cnt_beacon++; break;
+        case CAN_ID_DISPLAY_CMD: handle_display_cmd(event); break;
         default: break;
     }
 }
